@@ -1335,17 +1335,24 @@ chd_error chd_open_file(core_file *file, int mode, chd_file *parent, chd_file **
 	if (newchd->header.version < 5)
 	{
 		for (intfnum = 0; intfnum < ARRAY_LENGTH(codec_interfaces); intfnum++)
+		{
 			if (codec_interfaces[intfnum].compression == newchd->header.compression[0])
 			{
 				newchd->codecintf[0] = &codec_interfaces[intfnum];
 				break;
 			}
+		}
+
 		if (intfnum == ARRAY_LENGTH(codec_interfaces))
 			EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
 
 		/* initialize the codec */
 		if (newchd->codecintf[0]->init != NULL)
+		{
 			err = (*newchd->codecintf[0]->init)(&newchd->zlib_codec_data, newchd->header.hunkbytes);
+			if (err != CHDERR_NONE)
+				EARLY_EXIT(err);
+		}
 	}
 	else
 	{
@@ -1357,45 +1364,45 @@ chd_error chd_open_file(core_file *file, int mode, chd_file *parent, chd_file **
 				if (codec_interfaces[i].compression == newchd->header.compression[decompnum])
 				{
 					newchd->codecintf[decompnum] = &codec_interfaces[i];
-					if (newchd->codecintf[decompnum] == NULL && newchd->header.compression[decompnum] != 0)
-						err = CHDERR_UNSUPPORTED_FORMAT;
-
-					/* initialize the codec */
-					if (newchd->codecintf[decompnum]->init != NULL)
-					{
-						void* codec = NULL;
-						switch (newchd->header.compression[decompnum])
-						{
-							case CHD_CODEC_ZLIB:
-								codec = &newchd->zlib_codec_data;
-								break;
-
-							case CHD_CODEC_CD_ZLIB:
-								codec = &newchd->cdzl_codec_data;
-								break;
-
-							case CHD_CODEC_CD_LZMA:
-								codec = &newchd->cdlz_codec_data;
-								break;
-
-							case CHD_CODEC_CD_FLAC:
-								codec = &newchd->cdfl_codec_data;
-								break;
-						}
-						if (codec != NULL)
-							err = (*newchd->codecintf[decompnum]->init)(codec, newchd->header.hunkbytes);
-					}
-
+					break;
 				}
+			}
+
+			if (newchd->codecintf[decompnum] == NULL && newchd->header.compression[decompnum] != 0)
+				EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
+
+			/* initialize the codec */
+			if (newchd->codecintf[decompnum]->init != NULL)
+			{
+				void* codec = NULL;
+				switch (newchd->header.compression[decompnum])
+				{
+					case CHD_CODEC_ZLIB:
+						codec = &newchd->zlib_codec_data;
+						break;
+
+					case CHD_CODEC_CD_ZLIB:
+						codec = &newchd->cdzl_codec_data;
+						break;
+
+					case CHD_CODEC_CD_LZMA:
+						codec = &newchd->cdlz_codec_data;
+						break;
+
+					case CHD_CODEC_CD_FLAC:
+						codec = &newchd->cdfl_codec_data;
+						break;
+				}
+
+				if (codec == NULL)
+					EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
+
+				err = (*newchd->codecintf[decompnum]->init)(codec, newchd->header.hunkbytes);
+				if (err != CHDERR_NONE)
+					EARLY_EXIT(err);
 			}
 		}
 	}
-
-#if 0
-	/* HACK */
-	if (err != CHDERR_NONE)
-		EARLY_EXIT(err);
-#endif
 
 	/* all done */
 	*chd = newchd;
@@ -1464,15 +1471,19 @@ void chd_close(chd_file *chd)
 	/* deinit the codec */
 	if (chd->header.version < 5)
 	{
-	if (chd->codecintf[0] != NULL && chd->codecintf[0]->free != NULL)
-		(*chd->codecintf[0]->free)(&chd->zlib_codec_data);
+		if (chd->codecintf[0] != NULL && chd->codecintf[0]->free != NULL)
+			(*chd->codecintf[0]->free)(&chd->zlib_codec_data);
 	}
 	else
 	{
 		/* Free the codecs */
-		for (int i = 0 ; i < 4 ; i++)
+		for (int i = 0 ; i < ARRAY_LENGTH(chd->codecintf); i++)
 		{
 			void* codec = NULL;
+
+			if (chd->codecintf[i] == NULL)
+				continue;
+
 			switch (chd->codecintf[i]->compression)
 			{
 				case CHD_CODEC_CD_LZMA:
@@ -1491,6 +1502,7 @@ void chd_close(chd_file *chd)
 					codec = &chd->cdfl_codec_data;
 					break;
 			}
+
 			if (codec)
 			{
 				(*chd->codecintf[i]->free)(codec);
@@ -1852,6 +1864,9 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 	/* extract the common data */
 	header->flags         	= get_bigendian_uint32(&rawheader[16]);
 	header->compression[0]	= get_bigendian_uint32(&rawheader[20]);
+	header->compression[1]	= CHD_CODEC_NONE;
+	header->compression[2]	= CHD_CODEC_NONE;
+	header->compression[3]	= CHD_CODEC_NONE;
 
 	/* extract the V1/V2-specific data */
 	if (header->version < 3)

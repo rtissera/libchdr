@@ -825,6 +825,17 @@ static const codec_interface codec_interfaces[] =
 		NULL
 	},
 
+	/* V5 zlib compression */
+	{
+		CHD_CODEC_ZLIB,
+		"zlib (Deflate)",
+		FALSE,
+		zlib_codec_init,
+		zlib_codec_free,
+		zlib_codec_decompress,
+		NULL
+	},
+
 	/* V5 CD zlib compression */
 	{
 		CHD_CODEC_CD_ZLIB,

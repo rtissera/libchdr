@@ -1356,6 +1356,10 @@ chd_error chd_open_file(core_file *file, int mode, chd_file *parent, chd_file **
 						void* codec = NULL;
 						switch (newchd->header.compression[decompnum])
 						{
+							case CHD_CODEC_ZLIB:
+								codec = &newchd->zlib_codec_data;
+								break;
+
 							case CHD_CODEC_CD_ZLIB:
 								codec = &newchd->cdzl_codec_data;
 								break;
@@ -1463,6 +1467,10 @@ void chd_close(chd_file *chd)
 			{
 				case CHD_CODEC_CD_LZMA:
 					codec = &chd->cdlz_codec_data;
+					break;
+
+				case CHD_CODEC_ZLIB:
+					codec = &chd->zlib_codec_data;
 					break;
 
 				case CHD_CODEC_CD_ZLIB:
@@ -2065,6 +2073,10 @@ static chd_error hunk_read_into_memory(chd_file *chd, UINT32 hunknum, UINT8 *des
 				{
 					case CHD_CODEC_CD_LZMA:
 						codec = &chd->cdlz_codec_data;
+						break;
+
+					case CHD_CODEC_ZLIB:
+						codec = &chd->zlib_codec_data;
 						break;
 
 					case CHD_CODEC_CD_ZLIB:

@@ -60,8 +60,6 @@
 
 #define SHA1_DIGEST_SIZE 20
 
-#define CHD_MAKE_TAG(a,b,c,d)       (((a) << 24) | ((b) << 16) | ((c) << 8) | (d))
-
 /***************************************************************************
     DEBUGGING
 ***************************************************************************/
@@ -791,12 +789,6 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
     CODEC INTERFACES
 ***************************************************************************/
 
-#define CHD_MAKE_TAG(a,b,c,d)       (((a) << 24) | ((b) << 16) | ((c) << 8) | (d))
-
-/* general codecs with CD frontend */
-#define CHD_CODEC_CD_ZLIB CHD_MAKE_TAG('c','d','z','l')
-#define CHD_CODEC_CD_LZMA CHD_MAKE_TAG('c','d','l','z')
-#define CHD_CODEC_CD_FLAC CHD_MAKE_TAG('c','d','f','l')
 
 static const codec_interface codec_interfaces[] =
 {

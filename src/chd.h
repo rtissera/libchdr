@@ -194,11 +194,18 @@ extern "C" {
 #define CHDFLAGS_IS_WRITEABLE		0x00000002
 #define CHDFLAGS_UNDEFINED			0xfffffffc
 
+#define CHD_MAKE_TAG(a,b,c,d)       (((a) << 24) | ((b) << 16) | ((c) << 8) | (d))
+
 /* compression types */
 #define CHDCOMPRESSION_NONE			0
 #define CHDCOMPRESSION_ZLIB			1
 #define CHDCOMPRESSION_ZLIB_PLUS	2
 #define CHDCOMPRESSION_AV			3
+
+/* general codecs with CD frontend */
+#define CHD_CODEC_CD_ZLIB CHD_MAKE_TAG('c','d','z','l')
+#define CHD_CODEC_CD_LZMA CHD_MAKE_TAG('c','d','l','z')
+#define CHD_CODEC_CD_FLAC CHD_MAKE_TAG('c','d','f','l')
 
 /* A/V codec configuration parameters */
 #define AV_CODEC_COMPRESS_CONFIG	1

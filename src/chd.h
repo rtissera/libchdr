@@ -202,6 +202,7 @@ extern "C" {
 #define CHDCOMPRESSION_ZLIB_PLUS	2
 #define CHDCOMPRESSION_AV			3
 
+#define CHD_CODEC_NONE 0
 #define CHD_CODEC_ZLIB				CHD_MAKE_TAG('z','l','i','b')
 /* general codecs with CD frontend */
 #define CHD_CODEC_CD_ZLIB			CHD_MAKE_TAG('c','d','z','l')

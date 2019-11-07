@@ -139,3 +139,8 @@ add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static ${CHDR_LIBS})
+
+add_library(chdr-shared SHARED ${CHDR_SOURCES})
+target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
+target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
+target_link_libraries(chdr-shared ${CHDR_LIBS})

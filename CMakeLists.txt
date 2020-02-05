@@ -11,56 +11,12 @@ set(CRYPTO_SOURCES
   deps/crypto/md5.c
   deps/crypto/sha1.c)
 
+set(WITH_OGG OFF CACHE BOOL "ogg support (default: test for libogg)")
+add_subdirectory(deps/flac-1.3.3)
+
 add_library(crypto-static STATIC ${CRYPTO_SOURCES})
 list(APPEND CHDR_INCLUDES deps/crypto)
 list(APPEND CHDR_LIBS crypto-static)
-
-# flac
-set(FLAC_SOURCES
-  deps/flac-1.3.2/src/libFLAC/bitmath.c
-  deps/flac-1.3.2/src/libFLAC/bitreader.c
-  #deps/flac-1.3.2/src/libFLAC/bitwriter.c
-  deps/flac-1.3.2/src/libFLAC/cpu.c
-  deps/flac-1.3.2/src/libFLAC/crc.c
-  deps/flac-1.3.2/src/libFLAC/fixed.c
-  deps/flac-1.3.2/src/libFLAC/fixed_intrin_sse2.c
-  deps/flac-1.3.2/src/libFLAC/fixed_intrin_ssse3.c
-  deps/flac-1.3.2/src/libFLAC/float.c
-  deps/flac-1.3.2/src/libFLAC/format.c
-  deps/flac-1.3.2/src/libFLAC/lpc.c
-  deps/flac-1.3.2/src/libFLAC/lpc_intrin_avx2.c
-  deps/flac-1.3.2/src/libFLAC/lpc_intrin_sse2.c
-  deps/flac-1.3.2/src/libFLAC/lpc_intrin_sse41.c
-  deps/flac-1.3.2/src/libFLAC/lpc_intrin_sse.c
-  deps/flac-1.3.2/src/libFLAC/md5.c
-  deps/flac-1.3.2/src/libFLAC/memory.c
-  deps/flac-1.3.2/src/libFLAC/metadata_iterators.c
-  deps/flac-1.3.2/src/libFLAC/metadata_object.c
-  #deps/flac-1.3.2/src/libFLAC/ogg_decoder_aspect.c
-  #deps/flac-1.3.2/src/libFLAC/ogg_encoder_aspect.c
-  #deps/flac-1.3.2/src/libFLAC/ogg_helper.c
-  #deps/flac-1.3.2/src/libFLAC/ogg_mapping.c
-  deps/flac-1.3.2/src/libFLAC/stream_decoder.c
-  #deps/flac-1.3.2/src/libFLAC/stream_encoder.c
-  #deps/flac-1.3.2/src/libFLAC/stream_encoder_framing.c
-  #deps/flac-1.3.2/src/libFLAC/stream_encoder_intrin_avx2.c
-  #deps/flac-1.3.2/src/libFLAC/stream_encoder_intrin_sse2.c
-  #deps/flac-1.3.2/src/libFLAC/stream_encoder_intrin_ssse3.c
-  deps/flac-1.3.2/src/libFLAC/window.c)
-if(WIN32)
-  list(APPEND FLAC_SOURCES deps/flac-1.3.2/src/libFLAC/windows_unicode_filenames.c)
-endif()
-
-if(APPLE OR UNIX)
-  list(APPEND FLAC_DEFS HAVE_SYS_PARAM_H)
-endif()
-
-add_library(flac-static STATIC ${FLAC_SOURCES})
-target_include_directories(flac-static PUBLIC deps/flac-1.3.2/include deps/flac-1.3.2/src/libFLAC/include)
-target_compile_definitions(flac-static PRIVATE PACKAGE_VERSION="1.3.2" FLAC__HAS_OGG=0 FLAC__NO_DLL HAVE_LROUND HAVE_STDINT_H HAVE_STDLIB_H ${FLAC_DEFS})
-list(APPEND CHDR_INCLUDES deps/flac-1.3.2/src/libFLAC/include)
-list(APPEND CHDR_DEFS FLAC__NO_DLL)
-list(APPEND CHDR_LIBS flac-static)
 
 # lzma
 set(LZMA_SOURCES
@@ -138,9 +94,9 @@ set(CHDR_SOURCES
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-static ${CHDR_LIBS})
+target_link_libraries(chdr-static ${CHDR_LIBS} FLAC)
 
 add_library(chdr-shared SHARED ${CHDR_SOURCES})
 target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
 target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-shared ${CHDR_LIBS})
+target_link_libraries(chdr-shared ${CHDR_LIBS} FLAC)

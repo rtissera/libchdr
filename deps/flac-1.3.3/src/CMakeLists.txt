@@ -10,7 +10,7 @@ if(BUILD_CXXLIBS)
     add_subdirectory("libFLAC++")
 endif()
 add_subdirectory("share")
-add_subdirectory("flac")
+#add_subdirectory("flac")
 add_subdirectory("metaflac")
 add_subdirectory("utils")
 

@@ -538,6 +538,7 @@ void lzma_codec_free(void* codec)
 
 	/* free memory */
 	LzmaDec_Free(&lzma_codec->decoder, (ISzAlloc*)&lzma_codec->allocator);
+	lzma_allocator_free(&lzma_codec->allocator);
 }
 
 /*-------------------------------------------------
@@ -582,7 +583,10 @@ chd_error cdlz_codec_init(void* codec, uint32_t hunkbytes)
 
 void cdlz_codec_free(void* codec)
 {
-	/* TODO */
+	cdlz_codec_data* cdlz = (cdlz_codec_data*) codec;
+	free(cdlz->buffer);
+	lzma_codec_free(&cdlz->base_decompressor);
+	zlib_codec_free(&cdlz->subcode_decompressor);
 }
 
 chd_error cdlz_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -641,7 +645,10 @@ chd_error cdzl_codec_init(void *codec, uint32_t hunkbytes)
 
 void cdzl_codec_free(void *codec)
 {
-	/* TODO */
+	cdzl_codec_data* cdzl = (cdzl_codec_data*)codec;
+	zlib_codec_free(&cdzl->base_decompressor);
+	zlib_codec_free(&cdzl->subcode_decompressor);
+	free(cdzl->buffer);
 }
 
 chd_error cdzl_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -741,7 +748,9 @@ chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 void cdfl_codec_free(void *codec)
 {
 	cdfl_codec_data *cdfl = (cdfl_codec_data*)codec;
+	free(cdfl->buffer);
 	inflateEnd(&cdfl->inflater);
+	flac_decoder_free(&cdfl->decoder);
 }
 
 chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -1210,6 +1219,12 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 		/* crc16 */
 		put_bigendian_uint16(&rawmap[10], crc);
 	}
+
+	free(compressed);
+	free(bitbuf);
+	free(decoder->lookup);
+	free(decoder->huffnode);
+	free(decoder);
 
 	/* verify the final CRC */
 	if (crc16(&header->rawmap[0], header->hunkcount * 12) != mapcrc)

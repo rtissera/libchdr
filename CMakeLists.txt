@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.1)
 
 project(chdr C)
 
+option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
+
 #--------------------------------------------------
 # static libs
 #--------------------------------------------------
@@ -12,7 +14,10 @@ set(CRYPTO_SOURCES
   deps/crypto/sha1.c)
 
 set(WITH_OGG OFF CACHE BOOL "ogg support (default: test for libogg)")
+set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(deps/flac-1.3.3)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
 
 add_library(crypto-static STATIC ${CRYPTO_SOURCES})
 list(APPEND CHDR_INCLUDES deps/crypto)
@@ -96,7 +101,9 @@ target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static ${CHDR_LIBS} FLAC)
 
-add_library(chdr-shared SHARED ${CHDR_SOURCES})
-target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
-target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-shared ${CHDR_LIBS} FLAC)
+if (BUILD_SHARED_LIBS)
+ add_library(chdr-shared SHARED ${CHDR_SOURCES})
+ target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
+ target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
+ target_link_libraries(chdr-shared ${CHDR_LIBS} FLAC)
+endif()

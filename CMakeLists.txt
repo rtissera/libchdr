@@ -3,9 +3,13 @@ cmake_minimum_required(VERSION 3.1)
 project(chdr C)
 
 option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
+option(WITH_SYSTEM_FLAC "Use system provided FLAC library" OFF)
+option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
+
+include(FindPkgConfig)
 
 #--------------------------------------------------
-# static libs
+# dependencies
 #--------------------------------------------------
 
 # crypto
@@ -13,11 +17,18 @@ set(CRYPTO_SOURCES
   deps/crypto/md5.c
   deps/crypto/sha1.c)
 
-set(WITH_OGG OFF CACHE BOOL "ogg support (default: test for libogg)")
-set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS OFF)
-add_subdirectory(deps/flac-1.3.3)
-set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+if (WITH_SYSTEM_FLAC)
+  pkg_check_modules(FLAC REQUIRED flac)
+  list(APPEND CHDR_INCLUDES ${FLAC_INCLUDE_DIRS})
+  list(APPEND CHDR_LIBS ${FLAC_LINK_LIBRARIES})
+else()
+  set(WITH_OGG OFF CACHE BOOL "ogg support (default: test for libogg)")
+  set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
+  set(BUILD_SHARED_LIBS OFF)
+  add_subdirectory(deps/flac-1.3.3)
+  set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+  list(APPEND CHDR_LIBS FLAC)
+endif()
 
 add_library(crypto-static STATIC ${CRYPTO_SOURCES})
 list(APPEND CHDR_INCLUDES deps/crypto)
@@ -75,9 +86,15 @@ list(APPEND CHDR_INCLUDES deps/lzma-16.04/C)
 list(APPEND CHDR_LIBS lzma-static)
 
 # zlib
-add_subdirectory(deps/zlib-1.2.11 EXCLUDE_FROM_ALL)
-list(APPEND CHDR_INCLUDES deps/zlib-1.2.11 ${CMAKE_CURRENT_BINARY_DIR}/deps/zlib-1.2.11)
-list(APPEND CHDR_LIBS zlibstatic)
+if (WITH_SYSTEM_ZLIB)
+  pkg_check_modules(ZLIB REQUIRED zlib)
+  list(APPEND CHDR_INCLUDES ${ZLIB_INCLUDE_DIRS})
+  list(APPEND CHDR_LIBS ${ZLIB_LINK_LIBRARIES})
+else()
+  add_subdirectory(deps/zlib-1.2.11 EXCLUDE_FROM_ALL)
+  list(APPEND CHDR_INCLUDES deps/zlib-1.2.11 ${CMAKE_CURRENT_BINARY_DIR}/deps/zlib-1.2.11)
+  list(APPEND CHDR_LIBS zlibstatic)
+endif()
 
 #--------------------------------------------------
 # chdr
@@ -99,11 +116,11 @@ set(CHDR_SOURCES
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-static ${CHDR_LIBS} FLAC)
+target_link_libraries(chdr-static ${CHDR_LIBS})
 
 if (BUILD_SHARED_LIBS)
- add_library(chdr-shared SHARED ${CHDR_SOURCES})
- target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
- target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
- target_link_libraries(chdr-shared ${CHDR_LIBS} FLAC)
+  add_library(chdr-shared SHARED ${CHDR_SOURCES})
+  target_include_directories(chdr-shared PRIVATE ${CHDR_INCLUDES})
+  target_compile_definitions(chdr-shared PRIVATE ${CHDR_DEFS})
+  target_link_libraries(chdr-shared ${CHDR_LIBS})
 endif()

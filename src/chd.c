@@ -427,7 +427,7 @@ void *lzma_fast_alloc(void *p, size_t size)
 	}
 
 	/* alloc a new one and put it into the list */
-	uint32_t *addr = (uint32_t *)malloc(sizeof(uint8_t) * (size + sizeof(uint32_t)));
+	uint32_t *addr = (uint32_t *)malloc(sizeof(uint8_t) * size + sizeof(uintptr_t));
 	if (addr==NULL)
 		return NULL;
 	for (int scan = 0; scan < MAX_LZMA_ALLOCS; scan++)
@@ -441,7 +441,7 @@ void *lzma_fast_alloc(void *p, size_t size)
 
 	/* set the low bit of the size so we don't match next time */
 	*addr = size | 1;
-	return addr + 1;
+	return addr + (sizeof(uint32_t) == sizeof(uintptr_t) ? 1 : 2);
 }
 
 /*-------------------------------------------------
@@ -2416,7 +2416,7 @@ static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size)
 	}
 
 	/* alloc a new one */
-	ptr = (UINT32 *)malloc(size + sizeof(UINT32));
+	ptr = (UINT32 *)malloc(size + sizeof(uintptr_t));
 	if (!ptr)
 		return NULL;
 
@@ -2430,7 +2430,7 @@ static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size)
 
 	/* set the low bit of the size so we don't match next time */
 	*ptr = size | 1;
-	return ptr + 1;
+	return ptr + (sizeof(uint32_t) == sizeof(uintptr_t) ? 1 : 2);
 }
 
 /*-------------------------------------------------
@@ -2441,7 +2441,7 @@ static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size)
 static void zlib_fast_free(voidpf opaque, voidpf address)
 {
 	zlib_allocator *alloc = (zlib_allocator *)opaque;
-	UINT32 *ptr = (UINT32 *)address - 1;
+	UINT32 *ptr = (UINT32 *)address - (sizeof(uint32_t) == sizeof(uintptr_t) ? 1 : 2);
 	int i;
 
 	/* find the hunk */

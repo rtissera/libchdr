@@ -142,7 +142,7 @@ if (BUILD_SHARED_LIBS)
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
 
-  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "src/chd.h;src/coretypes.h")
+  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "src/cdrom.h;src/chd.h;src/coretypes.h")
   set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
   install(TARGETS chdr
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"

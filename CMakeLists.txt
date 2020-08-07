@@ -9,6 +9,13 @@ option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
 option(WITH_SYSTEM_FLAC "Use system provided FLAC library" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+endif()
+
 include(FindPkgConfig)
 
 if (NOT DEFINED CMAKE_INSTALL_PREFIX)

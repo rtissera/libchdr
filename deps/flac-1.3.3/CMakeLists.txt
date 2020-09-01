@@ -8,7 +8,7 @@ project(FLAC VERSION 1.3.3) # HOMEPAGE_URL "https://www.xiph.org/flac/")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-option(BUILD_CXXLIBS "Build libFLAC++" ON)
+option(BUILD_CXXLIBS "Build libFLAC++" OFF)
 option(BUILD_EXAMPLES "Build and install examples" OFF)
 option(BUILD_MICROBENCH "Build and install microbench" OFF)
 option(BUILD_TESTING "Build and install tests" OFF)

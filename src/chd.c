@@ -1105,20 +1105,21 @@ static inline int compressed(chd_header* header) {
 
 static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 {
+	int result = 0;
 	int rawmapsize = map_size_v5(header);
 
 	if (!compressed(header))
 	{
 		header->rawmap = (uint8_t*)malloc(rawmapsize);
 		core_fseek(chd->file, header->mapoffset, SEEK_SET);
-		core_fread(chd->file, header->rawmap, rawmapsize);
+		result = core_fread(chd->file, header->rawmap, rawmapsize);
 		return CHDERR_NONE;
 	}
 
 	/* read the reader */
 	uint8_t rawbuf[16];
 	core_fseek(chd->file, header->mapoffset, SEEK_SET);
-	core_fread(chd->file, rawbuf, sizeof(rawbuf));
+	result = core_fread(chd->file, rawbuf, sizeof(rawbuf));
 	uint32_t const mapbytes = get_bigendian_uint32(&rawbuf[0]);
 	uint64_t const firstoffs = get_bigendian_uint48(&rawbuf[4]);
 	uint16_t const mapcrc = get_bigendian_uint16(&rawbuf[10]);
@@ -1129,7 +1130,7 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	/* now read the map */
 	uint8_t* compressed = (uint8_t*)malloc(sizeof(uint8_t) * mapbytes);
 	core_fseek(chd->file, header->mapoffset + 16, SEEK_SET);
-	core_fread(chd->file, compressed, mapbytes);
+	result = core_fread(chd->file, compressed, mapbytes);
 	struct bitstream* bitbuf = create_bitstream(compressed, sizeof(uint8_t) * mapbytes);
 	header->rawmap = (uint8_t*)malloc(rawmapsize);
 
@@ -2165,7 +2166,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, UINT32 hunknum, UINT8 *des
 			blockoffs = (uint64_t)get_bigendian_uint32(rawmap) * (uint64_t)chd->header.hunkbytes;
 			if (blockoffs != 0) {
 				core_fseek(chd->file, blockoffs, SEEK_SET);
-				core_fread(chd->file, dest, chd->header.hunkbytes);
+				int result = core_fread(chd->file, dest, chd->header.hunkbytes);
 			/* TODO
 			else if (m_parent_missing)
 				throw CHDERR_REQUIRES_PARENT; */

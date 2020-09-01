@@ -4,13 +4,15 @@ if(NOT (CMAKE_BUILD_TYPE OR CMAKE_CONFIGURATION_TYPES OR DEFINED ENV{CFLAGS} OR 
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo")
 endif()
 
-project(FLAC VERSION 1.3.2) # HOMEPAGE_URL "https://www.xiph.org/flac/")
+project(FLAC VERSION 1.3.3) # HOMEPAGE_URL "https://www.xiph.org/flac/")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 option(BUILD_CXXLIBS "Build libFLAC++" ON)
-option(BUILD_EXAMPLES "Build and install examples" ON)
-option(WITH_OGG "ogg support (default: test for libogg)" ON)
+option(BUILD_EXAMPLES "Build and install examples" OFF)
+option(BUILD_MICROBENCH "Build and install microbench" OFF)
+option(BUILD_TESTING "Build and install tests" OFF)
+option(WITH_OGG "ogg support (default: test for libogg)" OFF)
 
 if(WITH_OGG)
     find_package(OGG REQUIRED)
@@ -95,7 +97,9 @@ endif()
 
 add_subdirectory("doc")
 add_subdirectory("src")
-add_subdirectory("microbench")
+if(BUILD_MICROBENCH)
+    add_subdirectory("microbench")
+endif()
 if(BUILD_EXAMPLES)
     add_subdirectory("examples")
 endif()

@@ -346,6 +346,7 @@ static void zlib_codec_free(void *codec);
 static chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
 static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size);
 static void zlib_fast_free(voidpf opaque, voidpf address);
+static void zlib_allocator_free(voidpf opaque);
 
 /* lzma compression codec */
 static chd_error lzma_codec_init(void *codec, uint32_t hunkbytes);
@@ -790,6 +791,9 @@ void cdfl_codec_free(void *codec)
 	free(cdfl->buffer);
 	inflateEnd(&cdfl->inflater);
 	flac_decoder_free(&cdfl->decoder);
+
+	/* free our fast memory */
+	zlib_allocator_free(&cdfl->allocator);
 }
 
 chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -2490,15 +2494,12 @@ static void zlib_codec_free(void *codec)
 		inflateEnd(&data->inflater);
 
 		/* free our fast memory */
-		zlib_allocator alloc = data->allocator;
-		for (i = 0; i < MAX_ZLIB_ALLOCS; i++)
-			if (alloc.allocptr[i])
-				free(alloc.allocptr[i]);
+		zlib_allocator_free(&data->allocator);
 	}
 }
 
 /*-------------------------------------------------
-    zlib_codec_decompress - decomrpess data using
+    zlib_codec_decompress - decompress data using
     the ZLIB codec
 -------------------------------------------------*/
 
@@ -2600,4 +2601,17 @@ static void zlib_fast_free(voidpf opaque, voidpf address)
 			*(alloc->allocptr[i]) &= ~1;
 			return;
 		}
+}
+
+/*-------------------------------------------------
+    zlib_allocator_free
+-------------------------------------------------*/
+static void zlib_allocator_free(voidpf opaque)
+{
+	zlib_allocator *alloc = (zlib_allocator *)opaque;
+	int i;
+
+	for (i = 0; i < MAX_ZLIB_ALLOCS; i++)
+		if (alloc->allocptr[i])
+			free(alloc->allocptr[i]);
 }

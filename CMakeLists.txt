@@ -86,13 +86,14 @@ endif()
 #--------------------------------------------------
 
 set(CHDR_SOURCES
-  src/bitstream.c
-  src/cdrom.c
-  src/chd.c
-  src/coretypes.h
-  src/flac.c
-  src/huffman.c
+  src/libchdr_bitstream.c
+  src/libchdr_cdrom.c
+  src/libchdr_chd.c
+  src/libchdr_flac.c
+  src/libchdr_huffman.c
 )
+
+list(APPEND CHDR_INCLUDES include ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})

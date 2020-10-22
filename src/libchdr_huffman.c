@@ -101,7 +101,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "huffman.h"
+#include <libchdr/huffman.h>
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 

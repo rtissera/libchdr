@@ -42,10 +42,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "chd.h"
-#include "cdrom.h"
-#include "flac.h"
-#include "huffman.h"
+
+#include <libchdr/chd.h>
+#include <libchdr/cdrom.h>
+#include <libchdr/flac.h>
+#include <libchdr/huffman.h>
+
 #include "LzmaEnc.h"
 #include "LzmaDec.h"
 #include "md5.h"

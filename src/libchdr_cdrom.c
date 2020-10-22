@@ -19,7 +19,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "cdrom.h"
+#include <libchdr/cdrom.h>
 
 /***************************************************************************
     DEBUGGING

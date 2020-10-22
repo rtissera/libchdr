@@ -10,10 +10,7 @@ option(WITH_SYSTEM_FLAC "Use system provided FLAC library" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
-endif()
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -O3 -flto")
 endif()
 
 include(FindPkgConfig)
@@ -56,48 +53,16 @@ list(APPEND CHDR_LIBS crypto-static)
 
 # lzma
 set(LZMA_SOURCES
-  #deps/lzma-16.04/C/7zAlloc.c
-  #deps/lzma-16.04/C/7zArcIn.c
-  #deps/lzma-16.04/C/7zBuf2.c
-  #deps/lzma-16.04/C/7zBuf.c
-  #deps/lzma-16.04/C/7zCrc.c
-  #deps/lzma-16.04/C/7zCrcOpt.c
-  #deps/lzma-16.04/C/7zDec.c
-  #deps/lzma-16.04/C/7zFile.c
-  #deps/lzma-16.04/C/7zStream.c
-  #deps/lzma-16.04/C/Aes.c
-  #deps/lzma-16.04/C/AesOpt.c
   deps/lzma-16.04/C/Alloc.c
-  #deps/lzma-16.04/C/Bcj2.c
-  #deps/lzma-16.04/C/Bcj2Enc.c
   deps/lzma-16.04/C/Bra86.c
   deps/lzma-16.04/C/Bra.c
   deps/lzma-16.04/C/BraIA64.c
   deps/lzma-16.04/C/CpuArch.c
-  deps/lzma-16.04/C/Delta.c
-  #deps/lzma-16.04/C/DllSecur.c
   deps/lzma-16.04/C/LzFind.c
-  #deps/lzma-16.04/C/LzFindMt.c
-  #deps/lzma-16.04/C/Lzma2Dec.c
-  #deps/lzma-16.04/C/Lzma2Enc.c
   deps/lzma-16.04/C/Lzma86Dec.c
   deps/lzma-16.04/C/Lzma86Enc.c
   deps/lzma-16.04/C/LzmaDec.c
   deps/lzma-16.04/C/LzmaEnc.c
-  deps/lzma-16.04/C/LzmaLib.c
-  #deps/lzma-16.04/C/MtCoder.c
-  #deps/lzma-16.04/C/Ppmd7.c
-  #deps/lzma-16.04/C/Ppmd7Dec.c
-  #deps/lzma-16.04/C/Ppmd7Enc.c
-  #deps/lzma-16.04/C/Sha256.c
-  deps/lzma-16.04/C/Sort.c
-  #deps/lzma-16.04/C/Threads.c
-  #deps/lzma-16.04/C/Xz.c
-  #deps/lzma-16.04/C/XzCrc64.c
-  #deps/lzma-16.04/C/XzCrc64Opt.c
-  #deps/lzma-16.04/C/XzDec.c
-  #deps/lzma-16.04/C/XzEnc.c
-  #deps/lzma-16.04/C/XzIn.c
 )
 
 add_library(lzma-static STATIC ${LZMA_SOURCES})
@@ -121,18 +86,14 @@ endif()
 #--------------------------------------------------
 
 set(CHDR_SOURCES
-  src/bitstream.c
-  src/bitstream.h
-  src/cdrom.c
-  src/cdrom.h
-  src/chd.c
-  src/chd.h
-  src/coretypes.h
-  src/flac.c
-  src/flac.h
-  src/huffman.c
-  src/huffman.h
+  src/libchdr_bitstream.c
+  src/libchdr_cdrom.c
+  src/libchdr_chd.c
+  src/libchdr_flac.c
+  src/libchdr_huffman.c
 )
+
+list(APPEND CHDR_INCLUDES include ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
@@ -148,9 +109,11 @@ if (BUILD_SHARED_LIBS)
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
+  target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
 
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "src/cdrom.h;src/chd.h;src/coretypes.h")
   set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
+
   install(TARGETS chdr
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"

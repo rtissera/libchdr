@@ -58,7 +58,6 @@ set(LZMA_SOURCES
   deps/lzma-16.04/C/Bra.c
   deps/lzma-16.04/C/BraIA64.c
   deps/lzma-16.04/C/CpuArch.c
-  deps/lzma-16.04/C/Delta.c
   deps/lzma-16.04/C/LzFind.c
   deps/lzma-16.04/C/Lzma86Dec.c
   deps/lzma-16.04/C/Lzma86Enc.c

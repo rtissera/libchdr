@@ -63,7 +63,6 @@ set(LZMA_SOURCES
   deps/lzma-16.04/C/Lzma86Enc.c
   deps/lzma-16.04/C/LzmaDec.c
   deps/lzma-16.04/C/LzmaEnc.c
-  deps/lzma-16.04/C/Sort.c
 )
 
 add_library(lzma-static STATIC ${LZMA_SOURCES})

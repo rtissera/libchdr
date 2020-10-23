@@ -111,7 +111,7 @@ if (BUILD_SHARED_LIBS)
   target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
   target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
 
-  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "src/cdrom.h;src/chd.h;src/coretypes.h")
+  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/coretypes.h")
   set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
 
   install(TARGETS chdr

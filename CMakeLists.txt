@@ -10,7 +10,7 @@ option(WITH_SYSTEM_FLAC "Use system provided FLAC library" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -O3 -flto")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden -fPIC -O3 -flto")
 endif()
 
 include(FindPkgConfig)
@@ -25,50 +25,53 @@ if (NOT DEFINED CMAKE_INSTALL_INCLUDEDIR)
   set(CMAKE_INSTALL_INCLUDEDIR "include")
 endif()
 
+# Detect processor type.
+if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "amd64")
+  set(CPU_ARCH "x64")
+elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64")
+  # MSVC x86/x64
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(CPU_ARCH "x64")
+  else()
+    set(CPU_ARCH "x86")
+  endif()
+elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i386" OR
+       ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i686")
+  set(CPU_ARCH "x86")
+elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+  set(CPU_ARCH "aarch64")
+elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "armv7-a")
+  set(CPU_ARCH "arm")
+else()
+  message(FATAL_ERROR "Unknown system processor: " ${CMAKE_SYSTEM_PROCESSOR})
+endif()
+
 #--------------------------------------------------
 # dependencies
 #--------------------------------------------------
+
 
 # crypto
 set(CRYPTO_SOURCES
   deps/crypto/md5.c
   deps/crypto/sha1.c)
+list(APPEND CHDR_INCLUDES deps/crypto)
 
+# flac
 if (WITH_SYSTEM_FLAC)
   pkg_check_modules(FLAC REQUIRED flac)
   list(APPEND PLATFORM_INCLUDES ${FLAC_INCLUDE_DIRS})
   list(APPEND PLATFORM_LIBS ${FLAC_LIBRARIES})
 else()
-  set(WITH_OGG OFF CACHE BOOL "ogg support (default: test for libogg)")
-  set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
-  set(BUILD_SHARED_LIBS OFF)
-  add_subdirectory(deps/flac-1.3.3)
-  set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+  add_subdirectory(deps/flac-1.3.3 EXCLUDE_FROM_ALL)
   list(APPEND CHDR_LIBS FLAC)
+  list(APPEND CHDR_INCLUDES FLAC)
 endif()
 
-add_library(crypto-static STATIC ${CRYPTO_SOURCES})
-list(APPEND CHDR_INCLUDES deps/crypto)
-list(APPEND CHDR_LIBS crypto-static)
-
 # lzma
-set(LZMA_SOURCES
-  deps/lzma-16.04/C/Alloc.c
-  deps/lzma-16.04/C/Bra86.c
-  deps/lzma-16.04/C/Bra.c
-  deps/lzma-16.04/C/BraIA64.c
-  deps/lzma-16.04/C/CpuArch.c
-  deps/lzma-16.04/C/LzFind.c
-  deps/lzma-16.04/C/Lzma86Dec.c
-  deps/lzma-16.04/C/Lzma86Enc.c
-  deps/lzma-16.04/C/LzmaDec.c
-  deps/lzma-16.04/C/LzmaEnc.c
-)
-
-add_library(lzma-static STATIC ${LZMA_SOURCES})
-target_compile_options(lzma-static PRIVATE -D_7ZIP_ST)
-list(APPEND CHDR_INCLUDES deps/lzma-16.04/C)
-list(APPEND CHDR_LIBS lzma-static)
+add_subdirectory(deps/lzma-19.00 EXCLUDE_FROM_ALL)
+  list(APPEND CHDR_LIBS lzma)
+  list(APPEND CHDR_INCLUDES lzma)
 
 # zlib
 if (WITH_SYSTEM_ZLIB)
@@ -77,8 +80,8 @@ if (WITH_SYSTEM_ZLIB)
   list(APPEND PLATFORM_LIBS ${ZLIB_LIBRARIES})
 else()
   add_subdirectory(deps/zlib-1.2.11 EXCLUDE_FROM_ALL)
-  list(APPEND CHDR_INCLUDES deps/zlib-1.2.11 ${CMAKE_CURRENT_BINARY_DIR}/deps/zlib-1.2.11)
-  list(APPEND CHDR_LIBS zlibstatic)
+  list(APPEND CHDR_LIBS zlib)
+  list(APPEND CHDR_INCLUDES zlib)
 endif()
 
 #--------------------------------------------------
@@ -104,8 +107,10 @@ if (BUILD_SHARED_LIBS)
   set(LIBS ${PLATFORM_LIBS})
   list(TRANSFORM LIBS PREPEND "-l")
   list(JOIN LIBS " " LIBS)
+  set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+  set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
-  add_library(chdr SHARED ${CHDR_SOURCES})
+  add_library(chdr SHARED ${CHDR_SOURCES} ${CRYPTO_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
@@ -113,6 +118,10 @@ if (BUILD_SHARED_LIBS)
 
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
   set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
+
+  if (CMAKE_BUILD_TYPE MATCHES Release)
+    #add_custom_command(TARGET chdr POST_BUILD COMMAND ${CMAKE_STRIP} libchdr.so)
+  endif (CMAKE_BUILD_TYPE MATCHES Release)
 
   install(TARGETS chdr
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"

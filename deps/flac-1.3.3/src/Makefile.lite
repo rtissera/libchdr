@@ -1,76 +1,110 @@
-#  FLAC - Free Lossless Audio Codec
+#  libFLAC - Free Lossless Audio Codec library
 #  Copyright (C) 2001-2009  Josh Coalson
 #  Copyright (C) 2011-2016  Xiph.Org Foundation
 #
-#  This file is part the FLAC project.  FLAC is comprised of several
-#  components distributed under different licenses.  The codec libraries
-#  are distributed under Xiph.Org's BSD-like license (see the file
-#  COPYING.Xiph in this distribution).  All other programs, libraries, and
-#  plugins are distributed under the GPL (see COPYING.GPL).  The documentation
-#  is distributed under the Gnu FDL (see COPYING.FDL).  Each file in the
-#  FLAC distribution contains at the top the terms under which it may be
-#  distributed.
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions
+#  are met:
 #
-#  Since this particular file is relevant to all components of FLAC,
-#  it may be distributed under the Xiph.Org license, which is the least
-#  restrictive of those mentioned above.  See the file COPYING.Xiph in this
-#  distribution.
+#  - Redistributions of source code must retain the above copyright
+#  notice, this list of conditions and the following disclaimer.
+#
+#  - Redistributions in binary form must reproduce the above copyright
+#  notice, this list of conditions and the following disclaimer in the
+#  documentation and/or other materials provided with the distribution.
+#
+#  - Neither the name of the Xiph.org Foundation nor the names of its
+#  contributors may be used to endorse or promote products derived from
+#  this software without specific prior written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#  ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#  A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+#  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-topdir = ..
+#
+# GNU makefile
+#
 
-include $(topdir)/build/config.mk
+topdir = ../..
 
 ifeq ($(OS),Darwin)
-    EXTRA_TARGETS =
+    EXPLICIT_LIBS = $(OGG_EXPLICIT_LIBS) -lm
 else
-ifeq ($(PROC),x86_64)
-    EXTRA_TARGETS =
-else
-	# Can add plugin_xmms here if desired.
-    EXTRA_TARGETS =
-endif
+    LIBS = $(OGG_LIBS) -lm
 endif
 
 ifeq ($(findstring Windows,$(OS)),Windows)
-    EXTRA_TARGETS += share/win_utf8_io
+    WIN_UNICODE_COMPAT = windows_unicode_filenames.c
 endif
 
-.PHONY: all flac libFLAC libFLAC++ metaflac plugin_common plugin_xmms share/win_utf8_io share test_grabbag test_libs_common test_libFLAC test_libFLAC++ test_seeking test_streams flacdiff flactimer
-all: flac libFLAC libFLAC++ metaflac plugin_common $(EXTRA_TARGETS) share test_grabbag test_libs_common test_libFLAC test_libFLAC++ test_seeking test_streams
+LIB_NAME = libFLAC
+ifeq ($(PROC),ppc)
+    DEFINES = -DFLAC__CPU_PPC -DFLAC__USE_ALTIVEC -DFLAC__ALIGN_MALLOC_DATA
+else
+ifeq ($(OS),Solaris)
+    DEFINES = -DFLAC__NO_ASM -DFLAC__ALIGN_MALLOC_DATA
+else
+ifeq ($(PROC),i386)
+    DEFINES = -DFLAC__CPU_IA32 -DFLAC__HAS_NASM -DFLAC__ALIGN_MALLOC_DATA
+else
+    DEFINES = -DFLAC__ALIGN_MALLOC_DATA
+endif
+endif
+endif
+INCLUDES = -I./include -I$(topdir)/include $(OGG_INCLUDES)
+DEBUG_CFLAGS = -DFLAC__OVERFLOW_DETECT
 
-DEFAULT_CONFIG = release
+ifeq ($(PROC),i386)
+SRCS_NASM = \
+	ia32/cpu_asm.nasm \
+	ia32/fixed_asm.nasm \
+	ia32/lpc_asm.nasm
+endif
 
-CONFIG = $(DEFAULT_CONFIG)
+OGG_SRCS_C = \
+	ogg_decoder_aspect.c \
+	ogg_encoder_aspect.c \
+	ogg_helper.c \
+	ogg_mapping.c
 
-debug   : CONFIG = debug
-valgrind: CONFIG = valgrind
-release : CONFIG = release
+SRCS_C = \
+	bitmath.c \
+	bitreader.c \
+	bitwriter.c \
+	cpu.c \
+	crc.c \
+	fixed.c \
+	fixed_intrin_sse2.c \
+	fixed_intrin_ssse3.c \
+	float.c \
+	format.c \
+	lpc.c \
+	lpc_intrin_sse.c \
+	lpc_intrin_sse2.c \
+	lpc_intrin_sse41.c \
+	lpc_intrin_avx2.c \
+	md5.c \
+	memory.c \
+	metadata_iterators.c \
+	metadata_object.c \
+	stream_decoder.c \
+	stream_encoder.c \
+	stream_encoder_intrin_sse2.c \
+	stream_encoder_intrin_ssse3.c \
+	stream_encoder_intrin_avx2.c \
+	stream_encoder_framing.c \
+	window.c \
+	$(WIN_UNICODE_COMPAT) \
+	$(OGG_SRCS)
 
-debug   : all
-valgrind: all
-release : all
+include $(topdir)/build/lib.mk
 
-flac libFLAC libFLAC++ metaflac plugin_common plugin_xmms share/win_utf8_io share test_grabbag test_libs_common test_libFLAC test_libFLAC++ test_seeking test_streams:
-	(cd $@ ; $(MAKE) -f Makefile.lite $(CONFIG))
-
-flacdiff flactimer:
-	(cd utils/$@ ; $(MAKE) -f Makefile.lite $(CONFIG))
-
-clean:
-	-(cd flac ; $(MAKE) -f Makefile.lite clean)
-	-(cd libFLAC ; $(MAKE) -f Makefile.lite clean)
-	-(cd libFLAC++ ; $(MAKE) -f Makefile.lite clean)
-	-(cd metaflac ; $(MAKE) -f Makefile.lite clean)
-	-(cd plugin_common ; $(MAKE) -f Makefile.lite clean)
-	-(cd plugin_xmms ; $(MAKE) -f Makefile.lite clean)
-	-(cd share ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_grabbag ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_libs_common ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_libFLAC ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_libFLAC++ ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_seeking ; $(MAKE) -f Makefile.lite clean)
-	-(cd test_streams ; $(MAKE) -f Makefile.lite clean)
-	-(cd utils/flacdiff ; $(MAKE) -f Makefile.lite clean)
-	-(cd utils/flactimer ; $(MAKE) -f Makefile.lite clean)
-
-include $(topdir)/Makefile.deps
+# DO NOT DELETE THIS LINE -- make depend depends on it.

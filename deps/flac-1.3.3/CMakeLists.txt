@@ -7,7 +7,6 @@ add_library(FLAC STATIC
   include/FLAC/metadata.h
   include/FLAC/ordinals.h
   include/FLAC/stream_decoder.h
-  include/FLAC/stream_encoder.h
   include/share/alloc.h
   include/share/compat.h
   include/share/endswap.h

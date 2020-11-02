@@ -14,7 +14,7 @@
 #define __CDROM_H__
 
 #include <stdint.h>
-
+#include <libchdr/chdconfig.h>
 
 /***************************************************************************
     CONSTANTS
@@ -60,10 +60,12 @@ enum
     FUNCTION PROTOTYPES
 ***************************************************************************/
 
+#ifdef WANT_RAW_DATA_SECTOR
 /* ECC utilities */
 int ecc_verify(const uint8_t *sector);
 void ecc_generate(uint8_t *sector);
 void ecc_clear(uint8_t *sector);
+#endif
 
 
 

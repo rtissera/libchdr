@@ -78,16 +78,7 @@ add_library(FLAC
     metadata_iterators.c
     metadata_object.c
     stream_decoder.c
-    stream_encoder.c
-    stream_encoder_intrin_sse2.c
-    stream_encoder_intrin_ssse3.c
-    stream_encoder_intrin_avx2.c
-    stream_encoder_framing.c
     window.c
-    $<$<BOOL:${OGG_FOUND}>:ogg_decoder_aspect.c>
-    $<$<BOOL:${OGG_FOUND}>:ogg_encoder_aspect.c>
-    $<$<BOOL:${OGG_FOUND}>:ogg_helper.c>
-    $<$<BOOL:${OGG_FOUND}>:ogg_mapping.c>)
 if(TARGET FLAC-asm)
     target_sources(FLAC PRIVATE $<TARGET_OBJECTS:FLAC-asm>)
 endif()
@@ -103,9 +94,6 @@ target_include_directories(FLAC INTERFACE
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 target_link_libraries(FLAC PRIVATE $<$<BOOL:${HAVE_LROUND}>:m>)
-if(TARGET Ogg::ogg)
-    target_link_libraries(FLAC PUBLIC Ogg::ogg)
-endif()
 if(BUILD_SHARED_LIBS)
     set_target_properties(FLAC PROPERTIES
         C_VISIBILITY_PRESET hidden

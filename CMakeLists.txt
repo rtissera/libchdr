@@ -51,12 +51,6 @@ endif()
 #--------------------------------------------------
 
 
-# crypto
-set(CRYPTO_SOURCES
-  deps/crypto/md5.c
-  deps/crypto/sha1.c)
-list(APPEND CHDR_INCLUDES deps/crypto)
-
 # flac
 if (WITH_SYSTEM_FLAC)
   pkg_check_modules(FLAC REQUIRED flac)
@@ -110,7 +104,7 @@ if (BUILD_SHARED_LIBS)
   set(CMAKE_CXX_VISIBILITY_PRESET hidden)
   set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
-  add_library(chdr SHARED ${CHDR_SOURCES} ${CRYPTO_SOURCES})
+  add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})

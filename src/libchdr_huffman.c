@@ -142,6 +142,18 @@ struct huffman_decoder* create_huffman_decoder(int numcodes, int maxbits)
 	return decoder;
 }
 
+void delete_huffman_decoder(struct huffman_decoder* decoder)
+{
+	if (decoder != NULL)
+	{
+		if (decoder->lookup != NULL)
+			free(decoder->lookup);
+		if (decoder->huffnode != NULL)
+			free(decoder->huffnode);
+		free(decoder);
+	}
+}
+
 /*-------------------------------------------------
  *  decode_one - decode a single code from the
  *  huffman stream
@@ -411,6 +423,7 @@ int huffman_build_tree(struct huffman_decoder* decoder, uint32_t totaldata, uint
 	nextalloc = decoder->numcodes;
 	while (listitems > 1)
 	{
+		int curitem;
 		/* remove lowest two items */
 		struct node_t* node1 = &(*list[--listitems]);
 		struct node_t* node0 = &(*list[--listitems]);
@@ -422,7 +435,6 @@ int huffman_build_tree(struct huffman_decoder* decoder, uint32_t totaldata, uint
 		newnode->weight = node0->weight + node1->weight;
 
 		/* insert into list at appropriate location */
-		int curitem;
 		for (curitem = 0; curitem < listitems; curitem++)
 			if (newnode->weight > list[curitem]->weight)
 			{
@@ -436,6 +448,7 @@ int huffman_build_tree(struct huffman_decoder* decoder, uint32_t totaldata, uint
 	/* compute the number of bits in each code, and fill in another histogram */
 	for (curcode = 0; curcode < decoder->numcodes; curcode++)
 	{
+		struct node_t *curnode;
 		struct node_t* node = &decoder->huffnode[curcode];
 		node->numbits = 0;
 		node->bits = 0;
@@ -444,7 +457,7 @@ int huffman_build_tree(struct huffman_decoder* decoder, uint32_t totaldata, uint
 		if (node->weight > 0)
 		{
 			/* determine the number of bits for this node */
-			for (struct node_t *curnode = node; curnode->parent != NULL; curnode = curnode->parent)
+			for (curnode = node; curnode->parent != NULL; curnode = curnode->parent)
 				node->numbits++;
 			if (node->numbits == 0)
 				node->numbits = 1;
@@ -514,13 +527,16 @@ void huffman_build_lookup_table(struct huffman_decoder* decoder)
 		struct node_t* node = &decoder->huffnode[curcode];
 		if (node->numbits > 0)
 		{
+         int shift;
+         lookup_value *dest;
+         lookup_value *destend;
 			/* set up the entry */
 			lookup_value value = MAKE_LOOKUP(curcode, node->numbits);
 
 			/* fill all matching entries */
-			int shift = decoder->maxbits - node->numbits;
-			lookup_value *dest = &decoder->lookup[node->bits << shift];
-			lookup_value *destend = &decoder->lookup[((node->bits + 1) << shift) - 1];
+			shift = decoder->maxbits - node->numbits;
+			dest = &decoder->lookup[node->bits << shift];
+			destend = &decoder->lookup[((node->bits + 1) << shift) - 1];
 			while (dest <= destend)
 				*dest++ = value;
 		}

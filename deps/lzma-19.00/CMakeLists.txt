@@ -23,7 +23,6 @@ add_library(lzma STATIC
   src/Lzma86Enc.c
   src/LzmaDec.c
   src/LzmaEnc.c
-  src/LzmaLib.c
   src/Sort.c
 )
 

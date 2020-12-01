@@ -1523,7 +1523,11 @@ cleanup:
 
 CHD_EXPORT chd_error chd_precache(chd_file *chd)
 {
+#ifdef _MSC_VER
+	size_t size, count;
+#else
 	ssize_t size, count;
+#endif
 
 	if (chd->file_cache == NULL)
 	{
@@ -2093,7 +2097,11 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 static UINT8* hunk_read_compressed(chd_file *chd, UINT64 offset, size_t size)
 {
+#ifdef _MSC_VER
+	size_t bytes;
+#else
 	ssize_t bytes;
+#endif
 	if (chd->file_cache != NULL)
 	{
 		return chd->file_cache + offset;
@@ -2115,7 +2123,11 @@ static UINT8* hunk_read_compressed(chd_file *chd, UINT64 offset, size_t size)
 
 static chd_error hunk_read_uncompressed(chd_file *chd, UINT64 offset, size_t size, UINT8 *dest)
 {
+#ifdef _MSC_VER
+	size_t bytes;
+#else
 	ssize_t bytes;
+#endif
 	if (chd->file_cache != NULL)
 	{
 		memcpy(dest, chd->file_cache + offset, size);

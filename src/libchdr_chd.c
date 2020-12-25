@@ -1684,6 +1684,9 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->file_cache)
 		free(chd->file_cache);
 
+	if (chd->parent)
+		chd_close(chd->parent);
+
 	/* free our memory */
 	free(chd);
 }
@@ -2386,13 +2389,33 @@ static chd_error hunk_read_into_memory(chd_file *chd, UINT32 hunknum, UINT8 *des
 				return hunk_read_into_memory(chd, blockoffs, dest);
 
 			case COMPRESSION_PARENT:
-#if 0
-				/* TODO */
-				if (m_parent_missing)
+				if (chd->parent == NULL)
 					return CHDERR_REQUIRES_PARENT;
-				return m_parent->read_bytes(uint64_t(blockoffs) * uint64_t(m_parent->unit_bytes()), dest, m_hunkbytes);
-#endif
-				return CHDERR_DECOMPRESSION_ERROR;
+				UINT8 units_in_hunk = chd->header.hunkbytes / chd->header.unitbytes;
+
+				/* blockoffs is aligned to units_in_hunk */
+				if (blockoffs % units_in_hunk == 0) {
+					return hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, dest);
+				/* blockoffs is not aligned to units_in_hunk */
+				} else {
+					UINT32 unit_in_hunk = blockoffs % units_in_hunk;
+					UINT8 *buf = malloc(chd->header.hunkbytes);
+					/* Read first half of hunk which contains blockoffs */
+					err = hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, buf);
+					if (err != CHDERR_NONE) {
+						free(buf);
+						return err;
+					}
+					memcpy(dest, buf + unit_in_hunk * chd->header.unitbytes, (units_in_hunk - unit_in_hunk) * chd->header.unitbytes);
+					/* Read second half of hunk which contains blockoffs */
+					err = hunk_read_into_memory(chd->parent, (blockoffs / units_in_hunk) + 1, buf);
+					if (err != CHDERR_NONE) {
+						free(buf);
+						return err;
+					}
+					memcpy(dest + (units_in_hunk - unit_in_hunk) * chd->header.unitbytes, buf, unit_in_hunk * chd->header.unitbytes);
+					free(buf);
+				}
 		}
 		return CHDERR_NONE;
 	}

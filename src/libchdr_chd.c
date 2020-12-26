@@ -1764,7 +1764,7 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd)
     chd_read_header - read CHD header data
 	from file into the pointed struct
 -------------------------------------------------*/
-chd_error chd_read_header(const char *filename, chd_header *header)
+CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header)
 {
 	chd_error err = CHDERR_NONE;
 	chd_file chd;

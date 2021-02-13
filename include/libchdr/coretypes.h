@@ -32,10 +32,10 @@ typedef int8_t INT8;
 #define core_fread(fc, buff, len) fread(buff, 1, len, fc)
 #define core_fclose fclose
 
-static size_t core_fsize(core_file *f)
+static UINT64 core_fsize(core_file *f)
 {
-    long rv;
-    long p = core_ftell(f);
+    UINT64 rv;
+    UINT64 p = core_ftell(f);
     core_fseek(f, 0, SEEK_END);
     rv = core_ftell(f);
     core_fseek(f, p, SEEK_SET);

@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <libchdr/flac.h>
+#include "dr_flac.h"
 
 /***************************************************************************
  *  FLAC DECODER

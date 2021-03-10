@@ -33,6 +33,7 @@
 #  include <config.h>
 #endif
 
+#if defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
 #include <io.h>
 #include <windows.h>
 #include "share/windows_unicode_filenames.h"
@@ -183,3 +184,4 @@ int flac_internal_rename_utf8(const char *oldname, const char *newname)
 		return ret;
 	}
 }
+#endif ////defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)

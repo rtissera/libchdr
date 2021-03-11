@@ -794,8 +794,7 @@ static chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 #endif
 
 	/* flac decoder init */
-	flac_decoder_init(&cdfl->decoder);
-	if (cdfl->decoder.decoder == NULL)
+	if (flac_decoder_init(&cdfl->decoder))
 		return CHDERR_OUT_OF_MEMORY;
 
 	return CHDERR_NONE;

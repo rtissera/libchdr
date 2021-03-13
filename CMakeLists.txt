@@ -6,7 +6,6 @@ set(CHDR_VERSION_MAJOR 0)
 set(CHDR_VERSION_MINOR 1)
 
 option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
-option(WITH_SYSTEM_FLAC "Use system provided FLAC library" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -50,17 +49,6 @@ endif()
 # dependencies
 #--------------------------------------------------
 
-
-# flac
-if (WITH_SYSTEM_FLAC)
-  pkg_check_modules(FLAC REQUIRED flac)
-  list(APPEND PLATFORM_INCLUDES ${FLAC_INCLUDE_DIRS})
-  list(APPEND PLATFORM_LIBS ${FLAC_LIBRARIES})
-else()
-  add_subdirectory(deps/flac-1.3.3 EXCLUDE_FROM_ALL)
-  list(APPEND CHDR_LIBS FLAC)
-  list(APPEND CHDR_INCLUDES FLAC)
-endif()
 
 # lzma
 add_subdirectory(deps/lzma-19.00 EXCLUDE_FROM_ALL)

@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#ifdef __LIBRETRO__
+#ifdef USE_LIBRETRO_VFS
 #include <streams/file_stream_transforms.h>
 #endif
 
@@ -25,9 +25,12 @@ typedef int8_t INT8;
 #if defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
 	#define core_fseek _fseeki64
 	#define core_ftell _ftelli64
-#else
+#elif defined(_LARGEFILE_SOURCE) && defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64
 	#define core_fseek fseeko64
 	#define core_ftell ftello64
+#else
+	#define core_fseek fseeko
+	#define core_ftell ftello
 #endif
 #define core_fread(fc, buff, len) fread(buff, 1, len, fc)
 #define core_fclose fclose

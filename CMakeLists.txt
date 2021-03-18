@@ -6,6 +6,7 @@ set(CHDR_VERSION_MAJOR 0)
 set(CHDR_VERSION_MINOR 1)
 
 option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
+option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -84,6 +85,12 @@ add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static ${CHDR_LIBS} ${PLATFORM_LIBS})
+
+if (INSTALL_STATIC_LIBS)
+  install(TARGETS chdr-static ${CHDR_LIBS}
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  )
+endif()
 
 if (BUILD_SHARED_LIBS)
   set(LIBS ${PLATFORM_LIBS})

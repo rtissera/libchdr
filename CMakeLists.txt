@@ -14,16 +14,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 include(FindPkgConfig)
-
-if (NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "/usr/local")
-endif()
-if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
-  set(CMAKE_INSTALL_LIBDIR "lib")
-endif()
-if (NOT DEFINED CMAKE_INSTALL_INCLUDEDIR)
-  set(CMAKE_INSTALL_INCLUDEDIR "include")
-endif()
+include(GNUInstallDirs)
 
 # Detect processor type.
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "amd64")

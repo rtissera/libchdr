@@ -9,8 +9,10 @@ option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
 option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden -fPIC -O3 -flto")
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden -fPIC -O3")
 endif()
 
 include(FindPkgConfig)

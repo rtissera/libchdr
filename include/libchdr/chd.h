@@ -393,7 +393,7 @@ CHD_EXPORT const char *chd_error_string(chd_error err);
 CHD_EXPORT const chd_header *chd_get_header(chd_file *chd);
 
 /* read CHD header data from file into the pointed struct */
-chd_error chd_read_header(const char *filename, chd_header *header);
+CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 
 
 

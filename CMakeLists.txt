@@ -110,7 +110,7 @@ if (BUILD_SHARED_LIBS)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")
     target_compile_definitions(chdr PRIVATE "CHD_DLL_EXPORTS")
   else()
-    target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
+    target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_CURRENT_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
   endif()
 
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")

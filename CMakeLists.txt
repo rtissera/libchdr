@@ -5,7 +5,9 @@ project(chdr C)
 set(CHDR_VERSION_MAJOR 0)
 set(CHDR_VERSION_MINOR 1)
 
-option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
+if(CMAKE_PROJECT_NAME STREQUAL "chdr")
+  option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
+endif()
 option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 

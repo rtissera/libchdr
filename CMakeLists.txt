@@ -76,12 +76,12 @@ set(CHDR_SOURCES
   src/libchdr_huffman.c
 )
 
-list(APPEND CHDR_INCLUDES include ${CMAKE_CURRENT_BINARY_DIR}/include)
+list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
-target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
+target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-static ${CHDR_LIBS} ${PLATFORM_LIBS})
+target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
 if (INSTALL_STATIC_LIBS)
   install(TARGETS chdr-static ${CHDR_LIBS}
@@ -90,16 +90,13 @@ if (INSTALL_STATIC_LIBS)
 endif()
 
 if (BUILD_SHARED_LIBS)
-  set(LIBS ${PLATFORM_LIBS})
-  list(TRANSFORM LIBS PREPEND "-l")
-  list(JOIN LIBS " " LIBS)
   set(CMAKE_CXX_VISIBILITY_PRESET hidden)
   set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
   add_library(chdr SHARED ${CHDR_SOURCES})
-  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
+  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
-  target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
+  target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")

@@ -76,12 +76,12 @@ set(CHDR_SOURCES
   src/libchdr_huffman.c
 )
 
-list(APPEND CHDR_INCLUDES include ${CMAKE_CURRENT_BINARY_DIR}/include)
+list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
-target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
+target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
-target_link_libraries(chdr-static ${CHDR_LIBS} ${PLATFORM_LIBS})
+target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
 if (INSTALL_STATIC_LIBS)
   install(TARGETS chdr-static ${CHDR_LIBS}
@@ -90,25 +90,24 @@ if (INSTALL_STATIC_LIBS)
 endif()
 
 if (BUILD_SHARED_LIBS)
-  set(LIBS ${PLATFORM_LIBS})
-  list(TRANSFORM LIBS PREPEND "-l")
-  list(JOIN LIBS " " LIBS)
   set(CMAKE_CXX_VISIBILITY_PRESET hidden)
   set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
   add_library(chdr SHARED ${CHDR_SOURCES})
-  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES})
+  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
-  target_link_libraries(chdr ${CHDR_LIBS} ${PLATFORM_LIBS})
+  target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")
     target_compile_definitions(chdr PRIVATE "CHD_DLL_EXPORTS")
+  elseif(APPLE)
+    target_link_options(chdr PRIVATE -Wl,-dead_strip -Wl,-exported_symbol,_chd_*)
   else()
     target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_CURRENT_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
   endif()
 
-  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
+  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
   set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
 
   if (CMAKE_BUILD_TYPE MATCHES Release)

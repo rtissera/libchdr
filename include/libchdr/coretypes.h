@@ -10,6 +10,15 @@
 
 #define ARRAY_LENGTH(x) (sizeof(x)/sizeof(x[0]))
 
+#if defined(__PS3__) || defined(__PSL1GHT__)
+#undef UINT32
+#undef UINT16
+#undef UINT8
+#undef INT32
+#undef INT16
+#undef INT8
+#endif
+
 typedef uint64_t UINT64;
 typedef uint32_t UINT32;
 typedef uint16_t UINT16;
@@ -28,6 +37,9 @@ typedef int8_t INT8;
 #elif defined(_LARGEFILE_SOURCE) && defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64
 	#define core_fseek fseeko64
 	#define core_ftell ftello64
+#elif defined(__PS3__) && !defined(__PSL1GHT__)
+    #define core_fseek(x,y,z) fseek(x,(off_t)y,z)
+    #define core_ftell(x) (off_t)ftell(x)
 #else
 	#define core_fseek fseeko
 	#define core_ftell ftello

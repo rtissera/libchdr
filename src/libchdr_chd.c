@@ -50,6 +50,9 @@
 
 #include "LzmaEnc.h"
 #include "LzmaDec.h"
+#if defined(__PS3__) || defined(__PSL1GHT__)
+#define __MACTYPES__
+#endif
 #include "zlib.h"
 
 #undef TRUE

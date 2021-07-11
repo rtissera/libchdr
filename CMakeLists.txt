@@ -22,27 +22,6 @@ endif()
 include(FindPkgConfig)
 include(GNUInstallDirs)
 
-# Detect processor type.
-if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "amd64")
-  set(CPU_ARCH "x64")
-elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64")
-  # MSVC x86/x64
-  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(CPU_ARCH "x64")
-  else()
-    set(CPU_ARCH "x86")
-  endif()
-elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i386" OR
-       ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "i686")
-  set(CPU_ARCH "x86")
-elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-  set(CPU_ARCH "aarch64")
-elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "armv7-a")
-  set(CPU_ARCH "arm")
-else()
-  message(FATAL_ERROR "Unknown system processor: " ${CMAKE_SYSTEM_PROCESSOR})
-endif()
-
 #--------------------------------------------------
 # dependencies
 #--------------------------------------------------

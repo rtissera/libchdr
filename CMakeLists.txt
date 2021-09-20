@@ -19,7 +19,6 @@ elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
-include(FindPkgConfig)
 include(GNUInstallDirs)
 
 #--------------------------------------------------
@@ -34,9 +33,8 @@ add_subdirectory(deps/lzma-19.00 EXCLUDE_FROM_ALL)
 
 # zlib
 if (WITH_SYSTEM_ZLIB)
-  pkg_check_modules(ZLIB REQUIRED zlib)
-  list(APPEND PLATFORM_INCLUDES ${ZLIB_INCLUDE_DIRS})
-  list(APPEND PLATFORM_LIBS ${ZLIB_LIBRARIES})
+  find_package(ZLIB REQUIRED)
+  list(APPEND PLATFORM_LIBS ZLIB::ZLIB)
 else()
   add_subdirectory(deps/zlib-1.2.11 EXCLUDE_FROM_ALL)
   list(APPEND CHDR_LIBS zlib)
@@ -58,7 +56,7 @@ set(CHDR_SOURCES
 list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
-target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
+target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
@@ -73,7 +71,7 @@ if (BUILD_SHARED_LIBS)
   set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
   add_library(chdr SHARED ${CHDR_SOURCES})
-  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} ${PLATFORM_INCLUDES} PUBLIC include)
+  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 

@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.9)
 
-project(chdr C)
-
-set(CHDR_VERSION_MAJOR 0)
-set(CHDR_VERSION_MINOR 1)
+project(chdr VERSION 0.1 LANGUAGES C)
 
 if(CMAKE_PROJECT_NAME STREQUAL "chdr")
   option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
@@ -82,7 +79,7 @@ if (BUILD_SHARED_LIBS)
   endif()
 
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
-  set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
+  set_target_properties(chdr PROPERTIES VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}" SOVERSION ${PROJECT_VERSION_MAJOR})
 
   if (CMAKE_BUILD_TYPE MATCHES Release)
     #add_custom_command(TARGET chdr POST_BUILD COMMAND ${CMAKE_STRIP} libchdr.so)

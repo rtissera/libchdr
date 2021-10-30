@@ -100,3 +100,4 @@ if (BUILD_SHARED_LIBS)
   install(FILES ${CMAKE_BINARY_DIR}/libchdr.pc DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 endif()
 
+add_subdirectory(tests)

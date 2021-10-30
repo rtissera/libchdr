@@ -22,7 +22,10 @@ int main(int argc, char** argv)
   /* Sequential read all hunks */
   err = chd_open(argv[1], CHD_OPEN_READ, NULL, &file);
   if (err)
-	printf("\nchd_open() error: %s", chd_error_string(err));
+  {
+    printf("\nchd_open() error: %s", chd_error_string(err));
+    return 0;
+  }
   header = chd_get_header(file);
   totalbytes = header->hunkbytes * header->totalhunks;
   buffer = malloc(header->hunkbytes);

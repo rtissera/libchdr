@@ -1570,6 +1570,12 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 	chd_error err;
 	core_file *file = NULL;
 
+	if (filename == NULL)
+	{
+		err = CHDERR_INVALID_PARAMETER;
+		goto cleanup;
+	}
+
 	/* choose the proper mode */
 	switch(mode)
 	{

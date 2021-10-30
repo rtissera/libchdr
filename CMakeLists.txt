@@ -56,7 +56,6 @@ list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
-target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
 if (INSTALL_STATIC_LIBS)
@@ -71,7 +70,6 @@ if (BUILD_SHARED_LIBS)
 
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
-  target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
   if(MSVC)

@@ -9,7 +9,7 @@ int main(int argc, char** argv)
   chd_file* file;
   const chd_header* header;
   void* buffer;
-  int i;
+  unsigned int i;
   unsigned int totalbytes;
   clock_t start, end;
   double time_taken;

@@ -9,7 +9,7 @@ option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden -fPIC -flto")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -flto")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -62,9 +62,6 @@ if (INSTALL_STATIC_LIBS)
 endif()
 
 if (BUILD_SHARED_LIBS)
-  set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-  set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
-
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
@@ -78,6 +75,8 @@ if (BUILD_SHARED_LIBS)
     target_link_libraries(chdr PRIVATE -Wl,--version-script ${CMAKE_CURRENT_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
   endif()
 
+  set_target_properties(chdr PROPERTIES C_VISIBILITY_PRESET hidden)
+  set_target_properties(chdr PROPERTIES VISIBILITY_INLINES_HIDDEN 1)
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
   set_target_properties(chdr PROPERTIES VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}" SOVERSION ${PROJECT_VERSION_MAJOR})
 

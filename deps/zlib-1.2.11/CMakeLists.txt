@@ -25,3 +25,5 @@ add_library(zlib STATIC
 
 target_include_directories(zlib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(zlib INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+
+set_target_properties(zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)

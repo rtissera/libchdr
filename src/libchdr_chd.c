@@ -1163,7 +1163,7 @@ static inline int chd_compressed(chd_header* header) {
 static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 {
 	int result = 0;
-	int hunknum;
+	uint32_t hunknum;
 	int repcount = 0;
 	uint8_t lastcomp = 0;
 	uint32_t last_self = 0;
@@ -1569,6 +1569,12 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 {
 	chd_error err;
 	core_file *file = NULL;
+
+	if (filename == NULL)
+	{
+		err = CHDERR_INVALID_PARAMETER;
+		goto cleanup;
+	}
 
 	/* choose the proper mode */
 	switch(mode)
@@ -2442,7 +2448,7 @@ static chd_error map_read(chd_file *chd)
 	UINT8 cookie[MAP_ENTRY_SIZE];
 	UINT32 count;
 	chd_error err;
-	int i;
+	UINT32 i;
 
 	/* first allocate memory */
 	chd->map = (map_entry *)malloc(sizeof(chd->map[0]) * chd->header.totalhunks);
@@ -2612,8 +2618,6 @@ static void zlib_codec_free(void *codec)
 	/* deinit the streams */
 	if (data != NULL)
 	{
-		int i;
-
 		inflateEnd(&data->inflater);
 
 		/* free our fast memory */

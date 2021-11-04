@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.9)
 
-project(chdr C)
-
-set(CHDR_VERSION_MAJOR 0)
-set(CHDR_VERSION_MINOR 1)
+project(chdr VERSION 0.1 LANGUAGES C)
 
 if(CMAKE_PROJECT_NAME STREQUAL "chdr")
   option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
@@ -11,12 +8,10 @@ endif()
 option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden -fPIC -O3 -flto")
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT HAVE_IPO)
+if(HAVE_IPO)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
 include(GNUInstallDirs)
@@ -57,7 +52,6 @@ list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
-target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFS})
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
 if (INSTALL_STATIC_LIBS)
@@ -67,25 +61,23 @@ if (INSTALL_STATIC_LIBS)
 endif()
 
 if (BUILD_SHARED_LIBS)
-  set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-  set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
-
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
-  target_compile_definitions(chdr PRIVATE ${CHDR_DEFS})
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")
     target_compile_definitions(chdr PRIVATE "CHD_DLL_EXPORTS")
   elseif(APPLE)
-    target_link_options(chdr PRIVATE -Wl,-dead_strip -Wl,-exported_symbol,_chd_*)
+    target_link_libraries(chdr PRIVATE -Wl,-dead_strip -Wl,-exported_symbol,_chd_*)
   else()
-    target_link_options(chdr PRIVATE -Wl,--version-script ${CMAKE_CURRENT_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
+    target_link_libraries(chdr PRIVATE -Wl,--version-script ${CMAKE_CURRENT_SOURCE_DIR}/src/link.T -Wl,--no-undefined)
   endif()
 
+  set_target_properties(chdr PROPERTIES C_VISIBILITY_PRESET hidden)
+  set_target_properties(chdr PROPERTIES VISIBILITY_INLINES_HIDDEN 1)
   set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
-  set_target_properties(chdr PROPERTIES VERSION "${CHDR_VERSION_MAJOR}.${CHDR_VERSION_MINOR}")
+  set_target_properties(chdr PROPERTIES VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}" SOVERSION ${PROJECT_VERSION_MAJOR})
 
   if (CMAKE_BUILD_TYPE MATCHES Release)
     #add_custom_command(TARGET chdr POST_BUILD COMMAND ${CMAKE_STRIP} libchdr.so)
@@ -101,3 +93,4 @@ if (BUILD_SHARED_LIBS)
   install(FILES ${CMAKE_BINARY_DIR}/libchdr.pc DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 endif()
 
+add_subdirectory(tests)

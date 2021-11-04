@@ -30,3 +30,4 @@ target_compile_definitions(lzma PRIVATE _7ZIP_ST)
 target_include_directories(lzma PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(lzma INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+set_target_properties(lzma PROPERTIES POSITION_INDEPENDENT_CODE ON)

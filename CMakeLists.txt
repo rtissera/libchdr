@@ -57,6 +57,10 @@ add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 
+if(MSVC)
+  target_compile_definitions(chdr-static PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 if (INSTALL_STATIC_LIBS)
   install(TARGETS chdr-static ${CHDR_LIBS}
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -71,6 +75,7 @@ if (BUILD_SHARED_LIBS)
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")
     target_compile_definitions(chdr PRIVATE "CHD_DLL_EXPORTS")
+    target_compile_definitions(chdr PRIVATE _CRT_SECURE_NO_WARNINGS)
   elseif(APPLE)
     target_link_libraries(chdr PRIVATE -Wl,-dead_strip -Wl,-exported_symbol,_chd_*)
   else()

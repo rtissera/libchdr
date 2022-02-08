@@ -31,7 +31,11 @@ typedef int8_t INT8;
 
 #define core_file FILE
 #define core_fopen(file) fopen(file, "rb")
-#if defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
+
+#if defined USE_LIBRETRO_VFS
+	#define core_fseek fseek
+	#define core_ftell ftell
+#elif defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
 	#define core_fseek _fseeki64
 	#define core_ftell _ftelli64
 #elif defined(_LARGEFILE_SOURCE) && defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.9)
 
-project(chdr VERSION 0.1 LANGUAGES C)
+project(chdr VERSION 0.2 LANGUAGES C)
 
 if(CMAKE_PROJECT_NAME STREQUAL "chdr")
   option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)

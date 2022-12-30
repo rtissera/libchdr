@@ -227,6 +227,12 @@ struct _lzma_codec_data
 	lzma_allocator	allocator;
 };
 
+typedef struct _huff_codec_data huff_codec_data;
+struct _huff_codec_data
+{
+	struct huffman_decoder* decoder;
+};
+
 /* codec-private data for the CDZL codec */
 typedef struct _cdzl_codec_data cdzl_codec_data;
 struct _cdzl_codec_data {
@@ -293,8 +299,9 @@ struct _chd_file
 	const codec_interface *	codecintf[4];	/* interface to the codec */
 
 	zlib_codec_data			zlib_codec_data;		/* zlib codec data */
-	lzma_codec_data			lzma_codec_data;		/* zlib codec data */
-	flac_codec_data			flac_codec_data;		/* zlib codec data */
+	lzma_codec_data			lzma_codec_data;		/* lzma codec data */
+	huff_codec_data			huff_codec_data;		/* huff codec data */
+	flac_codec_data			flac_codec_data;		/* flac codec data */
 	cdzl_codec_data			cdzl_codec_data;		/* cdzl codec data */
 	cdlz_codec_data			cdlz_codec_data;		/* cdlz codec data */
 	cdfl_codec_data			cdfl_codec_data;		/* cdfl codec data */
@@ -354,6 +361,11 @@ static void zlib_allocator_free(voidpf opaque);
 static chd_error lzma_codec_init(void *codec, uint32_t hunkbytes);
 static void lzma_codec_free(void *codec);
 static chd_error lzma_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
+
+/* huff compression codec */
+static chd_error huff_codec_init(void *codec, uint32_t hunkbytes);
+static void huff_codec_free(void *codec);
+static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
 
 /* flac compression codec */
 static chd_error flac_codec_init(void *codec, uint32_t hunkbytes);
@@ -772,6 +784,47 @@ static chd_error cdzl_codec_decompress(void *codec, const uint8_t *src, uint32_t
 }
 
 /***************************************************************************
+ *  HUFFMAN DECOMPRESSOR
+ ***************************************************************************
+ */
+
+static chd_error huff_codec_init(void* codec, uint32_t hunkbytes)
+{
+	huff_codec_data* huff_codec = (huff_codec_data*) codec;
+	huff_codec->decoder = create_huffman_decoder(256, 16);
+	return CHDERR_NONE;
+}
+
+static void huff_codec_free(void *codec)
+{
+	huff_codec_data* huff_codec = (huff_codec_data*) codec;
+	delete_huffman_decoder(huff_codec->decoder);
+}
+
+static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
+{
+	huff_codec_data* huff_codec = (huff_codec_data*) codec;
+	struct bitstream* bitbuf = create_bitstream(src, complen);
+
+	// first import the tree
+	enum huffman_error err = huffman_import_tree_huffman(huff_codec->decoder, bitbuf);
+	if (err != HUFFERR_NONE)
+	{
+		free(bitbuf);
+		return err;
+	}
+
+	// then decode the data
+	for (uint32_t cur = 0; cur < destlen; cur++)
+		dest[cur] = huffman_decode_one(huff_codec->decoder, bitbuf);
+	bitstream_flush(bitbuf);
+	chd_error result = bitstream_overflow(bitbuf) ? CHDERR_DECOMPRESSION_ERROR : CHDERR_NONE;
+
+	free(bitbuf);
+	return result;
+}
+ 
+/***************************************************************************
  *  CD FLAC DECOMPRESSOR
  ***************************************************************************
  */
@@ -990,6 +1043,17 @@ static const codec_interface codec_interfaces[] =
 		lzma_codec_init,
 		lzma_codec_free,
 		lzma_codec_decompress,
+		NULL
+	},
+
+	/* V5 huffman compression */
+	{
+		CHD_CODEC_HUFFMAN,
+		"Huffman",
+		FALSE,
+		huff_codec_init,
+		huff_codec_free,
+		huff_codec_decompress,
 		NULL
 	},
 
@@ -1613,6 +1677,10 @@ CHD_EXPORT chd_error chd_open_core_file(core_file *file, int mode, chd_file *par
 						codec = &newchd->lzma_codec_data;
 						break;
 
+					case CHD_CODEC_HUFFMAN:
+						codec = &newchd->huff_codec_data;
+						break;
+
 					case CHD_CODEC_FLAC:
 						codec = &newchd->flac_codec_data;
 						break;
@@ -1760,6 +1828,10 @@ CHD_EXPORT void chd_close(chd_file *chd)
 
 				case CHD_CODEC_LZMA:
 					codec = &chd->lzma_codec_data;
+					break;
+
+				case CHD_CODEC_HUFFMAN:
+					codec = &chd->huff_codec_data;
 					break;
 
 				case CHD_CODEC_FLAC:
@@ -2486,6 +2558,10 @@ static chd_error hunk_read_into_memory(chd_file *chd, UINT32 hunknum, UINT8 *des
 
 					case CHD_CODEC_LZMA:
 						codec = &chd->lzma_codec_data;
+						break;
+
+					case CHD_CODEC_HUFFMAN:
+						codec = &chd->huff_codec_data;
 						break;
 
 					case CHD_CODEC_FLAC:

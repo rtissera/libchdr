@@ -23,6 +23,10 @@ include(GNUInstallDirs)
 # dependencies
 #--------------------------------------------------
 
+# dr_libs
+add_library(dr_libs INTERFACE)
+target_include_directories(dr_libs INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/deps/dr_libs>")
+list(APPEND CHDR_LIBS dr_libs)
 
 # lzma
 add_subdirectory(deps/lzma-22.01 EXCLUDE_FROM_ALL)

@@ -23,6 +23,10 @@ include(GNUInstallDirs)
 # dependencies
 #--------------------------------------------------
 
+# dr_libs
+add_library(dr_libs INTERFACE)
+target_include_directories(dr_libs INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/deps/dr_libs>")
+list(APPEND CHDR_LIBS dr_libs)
 
 # lzma
 add_subdirectory(deps/lzma-22.01 EXCLUDE_FROM_ALL)
@@ -34,9 +38,10 @@ if (WITH_SYSTEM_ZLIB)
   find_package(ZLIB REQUIRED)
   list(APPEND PLATFORM_LIBS ZLIB::ZLIB)
 else()
-  add_subdirectory(deps/zlib-1.2.12 EXCLUDE_FROM_ALL)
-  list(APPEND CHDR_LIBS zlib)
-  list(APPEND CHDR_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/deps/zlib-1.2.12" "${CMAKE_CURRENT_BINARY_DIR}/deps/zlib-1.2.12")
+  add_subdirectory(deps/zlib-1.2.13 EXCLUDE_FROM_ALL)
+  set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  list(APPEND CHDR_LIBS zlibstatic)
+  list(APPEND CHDR_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/deps/zlib-1.2.13" "${CMAKE_CURRENT_BINARY_DIR}/deps/zlib-1.2.13")
 endif()
 
 #--------------------------------------------------

@@ -2206,7 +2206,7 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd)
 CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header)
 {
 	chd_error err = CHDERR_NONE;
-	chd_file chd;
+	chd_file chd = { };
 
 	/* punt if NULL */
 	if (filename == NULL || header == NULL)

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(chdr VERSION 0.2 LANGUAGES C)
+project(chdr VERSION 0.3 LANGUAGES C)
 
 if(CMAKE_PROJECT_NAME STREQUAL "chdr")
   option(BUILD_SHARED_LIBS "Build libchdr also as a shared library" ON)
@@ -61,14 +61,6 @@ if (WITH_SYSTEM_ZSTD)
   else()
     list(APPEND PLATFORM_LIBS zstd::libzstd_static)
   endif()
-else()
-  if(NOT TARGET libzstd_static)
-    option(ZSTD_BUILD_SHARED "BUILD SHARED LIBRARIES" OFF)
-    option(ZSTD_BUILD_PROGRAMS "BUILD PROGRAMS" OFF)
-    option(ZSTD_LEGACY_SUPPORT "LEGACY SUPPORT" OFF)
-    add_subdirectory(deps/zstd-1.5.6/build/cmake EXCLUDE_FROM_ALL)
-  endif()
-  list(APPEND CHDR_LIBS libzstd_static)
 endif()
 #--------------------------------------------------
 # chdr
@@ -92,6 +84,10 @@ if(MSVC)
   target_compile_definitions(chdr-static PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
+if (WITH_SYSTEM_ZSTD)
+  target_compile_definitions(chdr-static PRIVATE USE_SYSTEM_ZSTD)
+endif()
+
 if (INSTALL_STATIC_LIBS)
   install(TARGETS chdr-static ${CHDR_LIBS}
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -102,6 +98,10 @@ if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+
+  if (WITH_SYSTEM_ZSTD)
+    target_compile_definitions(chdr PRIVATE USE_SYSTEM_ZSTD)
+  endif()
 
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")

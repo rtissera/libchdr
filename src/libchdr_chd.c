@@ -343,7 +343,6 @@ static int core_legacy_fclose(void *file);
 static int core_legacy_fseek(void* file, int64_t offset, int whence);
 
 /* internal header operations */
-static chd_error header_validate(const chd_header *header);
 static chd_error header_read(chd_file *chd, chd_header *header);
 
 /* internal hunk read/write */
@@ -1905,11 +1904,6 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
 
-	/* validate the header */
-	err = header_validate(&newchd->header);
-	if (err != CHDERR_NONE)
-		EARLY_EXIT(err);
-
 	/* make sure we don't open a read-only file writeable */
 	if (mode == CHD_OPEN_READWRITE && !(newchd->header.flags & CHDFLAGS_IS_WRITEABLE))
 		EARLY_EXIT(err = CHDERR_FILE_NOT_WRITEABLE);
@@ -2346,7 +2340,6 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd)
 
 CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, chd_header *header)
 {
-	chd_error err = CHDERR_NONE;
 	chd_file chd;
 
 	/* verify parameters */
@@ -2357,12 +2350,7 @@ CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbac
 	chd.file.argp = (void*)user_data;
 
 	/* attempt to read the header */
-	err = header_read(&chd, header);
-	if (err != CHDERR_NONE)
-		return err;
-
-	/* validate the header */
-	return header_validate(header);
+	return header_read(&chd, header);
 }
 
 /*-------------------------------------------------
@@ -2505,74 +2493,6 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 ***************************************************************************/
 
 /*-------------------------------------------------
-    header_validate - check the validity of a
-    CHD header
--------------------------------------------------*/
-
-static chd_error header_validate(const chd_header *header)
-{
-	/* require a valid version */
-	if (header->version == 0 || header->version > CHD_HEADER_VERSION)
-		return CHDERR_UNSUPPORTED_VERSION;
-
-	/* require a valid length */
-	if ((header->version == 1 && header->length != CHD_V1_HEADER_SIZE) ||
-		(header->version == 2 && header->length != CHD_V2_HEADER_SIZE) ||
-		(header->version == 3 && header->length != CHD_V3_HEADER_SIZE) ||
-		(header->version == 4 && header->length != CHD_V4_HEADER_SIZE) ||
-		(header->version == 5 && header->length != CHD_V5_HEADER_SIZE))
-		return CHDERR_INVALID_PARAMETER;
-
-	/* Do not validate v5 header */
-	if (header->version <= 4)
-	{
-		size_t intfnum;
-
-		/* require valid flags */
-		if (header->flags & CHDFLAGS_UNDEFINED)
-			return CHDERR_INVALID_PARAMETER;
-
-		/* require a supported compression mechanism */
-		for (intfnum = 0; intfnum < ARRAY_LENGTH(codec_interfaces); intfnum++)
-			if (codec_interfaces[intfnum].compression == header->compression[0])
-				break;
-
-		if (intfnum == ARRAY_LENGTH(codec_interfaces))
-			return CHDERR_INVALID_PARAMETER;
-
-		/* require a valid hunksize */
-		if (header->hunkbytes == 0 || header->hunkbytes >= 65536 * 256)
-			return CHDERR_INVALID_PARAMETER;
-
-		/* require a valid hunk count */
-		if (header->totalhunks == 0)
-			return CHDERR_INVALID_PARAMETER;
-
-		/* require a valid MD5 and/or SHA1 if we're using a parent */
-		if ((header->flags & CHDFLAGS_HAS_PARENT) && memcmp(header->parentmd5, nullmd5, sizeof(nullmd5)) == 0 && memcmp(header->parentsha1, nullsha1, sizeof(nullsha1)) == 0)
-			return CHDERR_INVALID_PARAMETER;
-
-		/* if we're V3 or later, the obsolete fields must be 0 */
-		if (header->version >= 3 &&
-			(header->obsolete_cylinders != 0 || header->obsolete_sectors != 0 ||
-			 header->obsolete_heads != 0 || header->obsolete_hunksize != 0))
-			return CHDERR_INVALID_PARAMETER;
-
-		/* if we're pre-V3, the obsolete fields must NOT be 0 */
-		if (header->version < 3 &&
-			(header->obsolete_cylinders == 0 || header->obsolete_sectors == 0 ||
-			 header->obsolete_heads == 0 || header->obsolete_hunksize == 0))
-			return CHDERR_INVALID_PARAMETER;
-	}
-
-	/* some basic size checks to prevent huge mallocs */
-	if (header->hunkbytes >= CHD_MAX_HUNK_SIZE || ((uint64_t)header->hunkbytes * (uint64_t)header->totalhunks) >= CHD_MAX_FILE_SIZE)
-		return CHDERR_INVALID_PARAMETER;
-
-	return CHDERR_NONE;
-}
-
-/*-------------------------------------------------
     header_guess_unitbytes - for older CHD formats,
     guess at the bytes/unit based on metadata
 -------------------------------------------------*/
@@ -2600,7 +2520,7 @@ static uint32_t header_guess_unitbytes(chd_file *chd)
 
 /*-------------------------------------------------
     header_read - read a CHD header into the
-    internal data structure
+    internal data structure and perform validation
 -------------------------------------------------*/
 
 static chd_error header_read(chd_file *chd, chd_header *header)
@@ -2736,6 +2656,52 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 			break;
 	}
+
+	/* Do not validate v5 header */
+	if (header->version <= 4)
+	{
+		size_t intfnum;
+
+		/* require valid flags */
+		if (header->flags & CHDFLAGS_UNDEFINED)
+			return CHDERR_INVALID_DATA;
+
+		/* require a supported compression mechanism */
+		for (intfnum = 0; intfnum < ARRAY_LENGTH(codec_interfaces); intfnum++)
+			if (codec_interfaces[intfnum].compression == header->compression[0])
+				break;
+
+		if (intfnum == ARRAY_LENGTH(codec_interfaces))
+			return CHDERR_INVALID_DATA;
+
+		/* require a valid hunksize */
+		if (header->hunkbytes == 0 || header->hunkbytes >= 65536 * 256)
+			return CHDERR_INVALID_DATA;
+
+		/* require a valid hunk count */
+		if (header->totalhunks == 0)
+			return CHDERR_INVALID_DATA;
+
+		/* require a valid MD5 and/or SHA1 if we're using a parent */
+		if ((header->flags & CHDFLAGS_HAS_PARENT) && memcmp(header->parentmd5, nullmd5, sizeof(nullmd5)) == 0 && memcmp(header->parentsha1, nullsha1, sizeof(nullsha1)) == 0)
+			return CHDERR_INVALID_DATA;
+
+		/* if we're V3 or later, the obsolete fields must be 0 */
+		if (header->version >= 3 &&
+			(header->obsolete_cylinders != 0 || header->obsolete_sectors != 0 ||
+			 header->obsolete_heads != 0 || header->obsolete_hunksize != 0))
+			return CHDERR_INVALID_DATA;
+
+		/* if we're pre-V3, the obsolete fields must NOT be 0 */
+		if (header->version < 3 &&
+			(header->obsolete_cylinders == 0 || header->obsolete_sectors == 0 ||
+			 header->obsolete_heads == 0 || header->obsolete_hunksize == 0))
+			return CHDERR_INVALID_DATA;
+	}
+
+	/* some basic size checks to prevent huge mallocs */
+	if (header->hunkbytes >= CHD_MAX_HUNK_SIZE || ((uint64_t)header->hunkbytes * (uint64_t)header->totalhunks) >= CHD_MAX_FILE_SIZE)
+		return CHDERR_INVALID_DATA;
 
 	/* guess it worked */
 	return CHDERR_NONE;

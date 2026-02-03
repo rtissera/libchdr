@@ -303,7 +303,7 @@ struct _chd_file
 {
 	uint32_t					cookie;			/* cookie, should equal COOKIE_VALUE */
 
-	core_file *				file;			/* handle to the open core file */
+	core_file_callbacks_and_argp	file;			/* handle to the open core file */
 	uint64_t				file_size;		/* size of the core file */
 	chd_header				header;			/* header, extracted from file */
 
@@ -351,13 +351,19 @@ static const uint8_t nullsha1[CHD_SHA1_BYTES] = { 0 };
     PROTOTYPES
 ***************************************************************************/
 
-/* core_file wrappers over stdio */
-static core_file *core_stdio_fopen(char const *path);
-static uint64_t core_stdio_fsize(core_file *file);
-static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, core_file *file);
-static int core_stdio_fclose(core_file *file);
-static int core_stdio_fclose_nonowner(core_file *file); // alternate fclose used by chd_open_file
-static int core_stdio_fseek(core_file* file, int64_t offset, int whence);
+/* core_file_callbacks wrappers over stdio */
+static void *core_stdio_fopen(char const *path);
+static uint64_t core_stdio_fsize(void *file);
+static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, void *file);
+static int core_stdio_fclose(void *file);
+static int core_stdio_fclose_nonowner(void *file); // alternate fclose used by chd_open_file
+static int core_stdio_fseek(void* file, int64_t offset, int whence);
+
+/* Legacy core_file wrappers */
+static uint64_t core_legacy_fsize(void *file);
+static size_t core_legacy_fread(void *ptr, size_t size, size_t nmemb, void *file);
+static int core_legacy_fclose(void *file);
+static int core_legacy_fseek(void* file, int64_t offset, int whence);
 
 /* internal header operations */
 static chd_error header_validate(const chd_header *header);
@@ -1651,14 +1657,14 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 		header->rawmap = (uint8_t*)malloc(rawmapsize);
 		if (header->rawmap == NULL)
 			return CHDERR_OUT_OF_MEMORY;
-		core_fseek(chd->file, header->mapoffset, SEEK_SET);
-		result = core_fread(chd->file, header->rawmap, rawmapsize);
+		core_fseek(&chd->file, header->mapoffset, SEEK_SET);
+		result = core_fread(&chd->file, header->rawmap, rawmapsize);
 		return CHDERR_NONE;
 	}
 
 	/* read the reader */
-	core_fseek(chd->file, header->mapoffset, SEEK_SET);
-	result = core_fread(chd->file, rawbuf, sizeof(rawbuf));
+	core_fseek(&chd->file, header->mapoffset, SEEK_SET);
+	result = core_fread(&chd->file, rawbuf, sizeof(rawbuf));
 	mapbytes = get_bigendian_uint32_t(&rawbuf[0]);
 	firstoffs = get_bigendian_uint48(&rawbuf[4]);
 	mapcrc = get_bigendian_uint16(&rawbuf[10]);
@@ -1672,8 +1678,8 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	compressed_ptr = (uint8_t*)malloc(sizeof(uint8_t) * mapbytes);
 	if (compressed_ptr == NULL)
 		return CHDERR_OUT_OF_MEMORY;
-	core_fseek(chd->file, header->mapoffset + 16, SEEK_SET);
-	result = core_fread(chd->file, compressed_ptr, mapbytes);
+	core_fseek(&chd->file, header->mapoffset + 16, SEEK_SET);
+	result = core_fread(&chd->file, compressed_ptr, mapbytes);
 	bitbuf = create_bitstream(compressed_ptr, sizeof(uint8_t) * mapbytes);
 	header->rawmap = (uint8_t*)malloc(rawmapsize);
 	if (header->rawmap == NULL)
@@ -1824,21 +1830,33 @@ static inline void map_extract_old(const uint8_t *base, map_entry *entry, uint32
     CHD FILE MANAGEMENT
 ***************************************************************************/
 
+static const core_file_callbacks core_stdio = {
+	core_stdio_fsize,
+	core_stdio_fread,
+	core_stdio_fclose,
+	core_stdio_fseek
+};
+
+static const core_file_callbacks core_stdio_nonowner = {
+	core_stdio_fsize,
+	core_stdio_fread,
+	core_stdio_fclose_nonowner,
+	core_stdio_fseek
+};
+
+static const core_file_callbacks core_legacy = {
+	core_legacy_fsize,
+	core_legacy_fread,
+	core_legacy_fclose,
+	core_legacy_fseek
+};
+
 /*-------------------------------------------------
     chd_open_file - open a CHD file for access
 -------------------------------------------------*/
 
 CHD_EXPORT chd_error chd_open_file(FILE *file, int mode, chd_file *parent, chd_file **chd) {
-	core_file *stream = malloc(sizeof(core_file));
-	if (!stream)
-		return CHDERR_OUT_OF_MEMORY;
-	stream->argp = file;
-	stream->fsize = core_stdio_fsize;
-	stream->fread = core_stdio_fread;
-	stream->fclose = core_stdio_fclose_nonowner;
-	stream->fseek = core_stdio_fseek;
-
-	return chd_open_core_file(stream, mode, parent, chd);
+	return chd_open_core_file_callbacks(&core_stdio_nonowner, file, mode, parent, chd);
 }
 
 /*-------------------------------------------------
@@ -1847,12 +1865,24 @@ CHD_EXPORT chd_error chd_open_file(FILE *file, int mode, chd_file *parent, chd_f
 
 CHD_EXPORT chd_error chd_open_core_file(core_file *file, int mode, chd_file *parent, chd_file **chd)
 {
+	if (file == NULL)
+		return CHDERR_INVALID_PARAMETER;
+
+	return chd_open_core_file_callbacks(&core_legacy, file, mode, parent, chd);
+}
+
+/*-------------------------------------------------
+    chd_open_core_file_callbacks - open a CHD file for access
+-------------------------------------------------*/
+
+CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, int mode, chd_file *parent, chd_file **chd)
+{
 	chd_file *newchd = NULL;
 	chd_error err;
 	int intfnum;
 
 	/* verify parameters */
-	if (file == NULL)
+	if (callbacks == NULL)
 		EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
 
 	/* punt if invalid parent */
@@ -1866,8 +1896,9 @@ CHD_EXPORT chd_error chd_open_core_file(core_file *file, int mode, chd_file *par
 	memset(newchd, 0, sizeof(*newchd));
 	newchd->cookie = COOKIE_VALUE;
 	newchd->parent = parent;
-	newchd->file = file;
-	newchd->file_size = core_fsize(file);
+	newchd->file.callbacks = callbacks;
+	newchd->file.argp = (void*)user_data;
+	newchd->file_size = core_fsize(&newchd->file);
 	if ((int64_t)newchd->file_size <= 0)
 		EARLY_EXIT(err = CHDERR_INVALID_FILE);
 
@@ -2078,8 +2109,8 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd)
 		chd->file_cache = malloc(chd->file_size);
 		if (chd->file_cache == NULL)
 			return CHDERR_OUT_OF_MEMORY;
-		core_fseek(chd->file, 0, SEEK_SET);
-		count = core_fread(chd->file, chd->file_cache, chd->file_size);
+		core_fseek(&chd->file, 0, SEEK_SET);
+		count = core_fread(&chd->file, chd->file_cache, chd->file_size);
 		if (count != chd->file_size)
 		{
 			free(chd->file_cache);
@@ -2099,7 +2130,7 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd)
 CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, chd_file **chd)
 {
 	chd_error err;
-	core_file *file = NULL;
+	void *file = NULL;
 
 	if (filename == NULL)
 	{
@@ -2120,18 +2151,18 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 
 	/* open the file */
 	file = core_stdio_fopen(filename);
-	if (file == 0)
+	if (file == NULL)
 	{
 		err = CHDERR_FILE_NOT_FOUND;
 		goto cleanup;
 	}
 
 	/* now open the CHD */
-	return chd_open_core_file(file, mode, parent, chd);
+	return chd_open_core_file_callbacks(&core_stdio, file, mode, parent, chd);
 
 cleanup:
 	if ((err != CHDERR_NONE) && (file != NULL))
-		core_fclose(file);
+		core_stdio_fclose(file);
 	return err;
 }
 
@@ -2243,8 +2274,8 @@ CHD_EXPORT void chd_close(chd_file *chd)
 		free(chd->map);
 
 	/* close the file */
-	if (chd->file != NULL)
-		core_fclose(chd->file);
+	if (chd->file.callbacks != NULL)
+		core_fclose(&chd->file);
 
 #ifdef NEED_CACHE_HUNK
 	if (PRINTF_MAX_HUNK) printf("Max hunk = %d/%d\n", chd->maxhunk, chd->header.totalhunks);
@@ -2266,7 +2297,10 @@ CHD_EXPORT void chd_close(chd_file *chd)
 
 CHD_EXPORT core_file *chd_core_file(chd_file *chd)
 {
-	return chd->file;
+	if (chd->file.callbacks != &core_legacy)
+		return NULL;
+
+	return chd->file.argp;
 }
 
 /*-------------------------------------------------
@@ -2329,20 +2363,21 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd)
 }
 
 /*-------------------------------------------------
-    chd_read_header - read CHD header data
+    chd_read_header_core_file_callbacks - read CHD header data
 	from file into the pointed struct
 -------------------------------------------------*/
 
-CHD_EXPORT chd_error chd_read_header_core_file(core_file *file, chd_header *header)
+CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, chd_header *header)
 {
 	chd_error err = CHDERR_NONE;
 	chd_file chd;
 
 	/* verify parameters */
-	if (file == NULL || header == NULL)
+	if (callbacks == NULL || header == NULL)
 		return CHDERR_INVALID_PARAMETER;
 
-	chd.file = file;
+	chd.file.callbacks = callbacks;
+	chd.file.argp = (void*)user_data;
 
 	/* attempt to read the header */
 	err = header_read(&chd, header);
@@ -2354,25 +2389,26 @@ CHD_EXPORT chd_error chd_read_header_core_file(core_file *file, chd_header *head
 }
 
 /*-------------------------------------------------
+    chd_read_header_core_file - read CHD header data
+	from file into the pointed struct
+-------------------------------------------------*/
+
+CHD_EXPORT chd_error chd_read_header_core_file(core_file *file, chd_header *header)
+{
+	if (file == NULL)
+		return CHDERR_INVALID_PARAMETER;
+
+	return chd_read_header_core_file_callbacks(&core_legacy, file, header);
+}
+
+/*-------------------------------------------------
     chd_read_header - read CHD header data
 	from file into the pointed struct
 -------------------------------------------------*/
 
 CHD_EXPORT chd_error chd_read_header_file(FILE *file, chd_header *header)
 {
-	chd_error err;
-	core_file *stream = malloc(sizeof(core_file));
-	if (!stream)
-		return CHDERR_OUT_OF_MEMORY;
-	stream->argp = file;
-	stream->fsize = core_stdio_fsize;
-	stream->fread = core_stdio_fread;
-	stream->fclose = core_stdio_fclose_nonowner;
-	stream->fseek = core_stdio_fseek;
-
-	err = chd_read_header_core_file(stream, header);
-	core_fclose(stream);
-	return err;
+	return chd_read_header_core_file_callbacks(&core_stdio_nonowner, file, header);
 }
 
 /*-------------------------------------------------
@@ -2383,7 +2419,7 @@ CHD_EXPORT chd_error chd_read_header_file(FILE *file, chd_header *header)
 CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header)
 {
 	chd_error err;
-	core_file *file = NULL;
+	void *file = NULL;
 
 	if (filename == NULL)
 	{
@@ -2393,17 +2429,17 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header)
 
 	/* open the file */
 	file = core_stdio_fopen(filename);
-	if (file == 0)
+	if (file == NULL)
 	{
 		err = CHDERR_FILE_NOT_FOUND;
 		goto cleanup;
 	}
 
-	err = chd_read_header_core_file(file, header);
+	err = chd_read_header_core_file_callbacks(&core_stdio, file, header);
 
 	cleanup:
 	if (file != NULL)
-		core_fclose(file);
+		core_stdio_fclose(file);
 	return err;
 }
 
@@ -2474,8 +2510,8 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 
 	/* read the metadata */
 	outputlen = MIN(outputlen, metaentry.length);
-	core_fseek(chd->file, metaentry.offset + METADATA_HEADER_SIZE, SEEK_SET);
-	count = core_fread(chd->file, output, outputlen);
+	core_fseek(&chd->file, metaentry.offset + METADATA_HEADER_SIZE, SEEK_SET);
+	count = core_fread(&chd->file, output, outputlen);
 	if (count != outputlen)
 		return CHDERR_READ_ERROR;
 
@@ -2626,12 +2662,12 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 		return CHDERR_INVALID_PARAMETER;
 
 	/* punt if invalid file */
-	if (chd->file == NULL)
+	if (chd->file.callbacks == NULL)
 		return CHDERR_INVALID_FILE;
 
 	/* seek and read */
-	core_fseek(chd->file, 0, SEEK_SET);
-	count = core_fread(chd->file, rawheader, sizeof(rawheader));
+	core_fseek(&chd->file, 0, SEEK_SET);
+	count = core_fread(&chd->file, rawheader, sizeof(rawheader));
 	if (count != sizeof(rawheader))
 		return CHDERR_READ_ERROR;
 
@@ -2786,8 +2822,8 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 		if (size > chd->header.hunkbytes)
 			return NULL;
 
-		core_fseek(chd->file, offset, SEEK_SET);
-		bytes = core_fread(chd->file, chd->compressed, size);
+		core_fseek(&chd->file, offset, SEEK_SET);
+		bytes = core_fread(&chd->file, chd->compressed, size);
 		if (bytes != size)
 			return NULL;
 		return chd->compressed;
@@ -2815,8 +2851,8 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
-		core_fseek(chd->file, offset, SEEK_SET);
-		bytes = core_fread(chd->file, dest, size);
+		core_fseek(&chd->file, offset, SEEK_SET);
+		bytes = core_fread(&chd->file, dest, size);
 		if (bytes != size)
 			return CHDERR_READ_ERROR;
 	}
@@ -2863,7 +2899,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 	chd_error err;
 
 	/* punt if no file */
-	if (chd->file == NULL)
+	if (chd->file.callbacks == NULL)
 		return CHDERR_INVALID_FILE;
 
 	/* return an error if out of range */
@@ -2952,8 +2988,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 		{
 			blockoffs = (uint64_t)get_bigendian_uint32_t(rawmap) * (uint64_t)chd->header.hunkbytes;
 			if (blockoffs != 0) {
-				core_fseek(chd->file, blockoffs, SEEK_SET);
-				int result = core_fread(chd->file, dest, chd->header.hunkbytes);
+				core_fseek(&chd->file, blockoffs, SEEK_SET);
+				int result = core_fread(&chd->file, dest, chd->header.hunkbytes);
 			/* TODO
 			else if (m_parent_missing)
 				throw CHDERR_REQUIRES_PARENT; */
@@ -3115,8 +3151,8 @@ static chd_error map_read(chd_file *chd)
 			entries = MAP_STACK_ENTRIES;
 
 		/* read that many */
-		core_fseek(chd->file, fileoffset, SEEK_SET);
-		count = core_fread(chd->file, raw_map_entries, entries * entrysize);
+		core_fseek(&chd->file, fileoffset, SEEK_SET);
+		count = core_fread(&chd->file, raw_map_entries, entries * entrysize);
 		if (count != entries * entrysize)
 		{
 			err = CHDERR_READ_ERROR;
@@ -3144,8 +3180,8 @@ static chd_error map_read(chd_file *chd)
 	}
 
 	/* verify the cookie */
-	core_fseek(chd->file, fileoffset, SEEK_SET);
-	count = core_fread(chd->file, &cookie, entrysize);
+	core_fseek(&chd->file, fileoffset, SEEK_SET);
+	count = core_fread(&chd->file, &cookie, entrysize);
 	if (count != entrysize || memcmp(&cookie, END_OF_LIST_COOKIE, entrysize))
 	{
 		err = CHDERR_INVALID_FILE;
@@ -3188,9 +3224,9 @@ static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t m
 		uint32_t	count;
 
 		/* read the raw header */
-		if (core_fseek(chd->file, metaentry->offset, SEEK_SET) != 0)
+		if (core_fseek(&chd->file, metaentry->offset, SEEK_SET) != 0)
 			break;
-		count = core_fread(chd->file, raw_meta_header, sizeof(raw_meta_header));
+		count = core_fread(&chd->file, raw_meta_header, sizeof(raw_meta_header));
 		if (count != sizeof(raw_meta_header))
 			break;
 
@@ -3393,26 +3429,15 @@ static void zlib_allocator_free(voidpf opaque)
 /*-------------------------------------------------
 	core_stdio_fopen - core_file wrapper over fopen
 -------------------------------------------------*/
-static core_file *core_stdio_fopen(char const *path) {
-	core_file *file = malloc(sizeof(core_file));
-	if (!file)
-		return NULL;
-	if (!(file->argp = fopen(path, "rb"))) {
-		free(file);
-		return NULL;
-	}
-	file->fsize = core_stdio_fsize;
-	file->fread = core_stdio_fread;
-	file->fclose = core_stdio_fclose;
-	file->fseek = core_stdio_fseek;
-	return file;
+static void *core_stdio_fopen(char const *path) {
+	return fopen(path, "rb");
 }
 
 /*-------------------------------------------------
 	core_stdio_fsize - core_file function for
 	getting file size with stdio
 -------------------------------------------------*/
-static uint64_t core_stdio_fsize(core_file *file) {
+static uint64_t core_stdio_fsize(void *file) {
 #if defined USE_LIBRETRO_VFS
 	#define core_stdio_fseek_impl fseek
 	#define core_stdio_ftell_impl ftell
@@ -3431,7 +3456,7 @@ static uint64_t core_stdio_fsize(core_file *file) {
 #endif
 	FILE *fp;
 	uint64_t p, rv;
-	fp = (FILE*)file->argp;
+	fp = (FILE*)file;
 
 	p = core_stdio_ftell_impl(fp);
 	core_stdio_fseek_impl(fp, 0, SEEK_END);
@@ -3443,33 +3468,61 @@ static uint64_t core_stdio_fsize(core_file *file) {
 /*-------------------------------------------------
 	core_stdio_fread - core_file wrapper over fread
 -------------------------------------------------*/
-static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, core_file *file) {
-	return fread(ptr, size, nmemb, (FILE*)file->argp);
+static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, void *file) {
+	return fread(ptr, size, nmemb, (FILE*)file);
 }
 
 /*-------------------------------------------------
 	core_stdio_fclose - core_file wrapper over fclose
 -------------------------------------------------*/
-static int core_stdio_fclose(core_file *file) {
-	int err = fclose((FILE*)file->argp);
-	if (err == 0)
-		free(file);
-	return err;
+static int core_stdio_fclose(void *file) {
+	return fclose((FILE*)file);
 }
 
 /*-------------------------------------------------
 	core_stdio_fclose_nonowner - don't call fclose because
-		we don't own the underlying file, but do free the
-		core_file because libchdr did allocate that itself.
+		we don't own the underlying file.
 -------------------------------------------------*/
-static int core_stdio_fclose_nonowner(core_file *file) {
-	free(file);
+static int core_stdio_fclose_nonowner(void *file) {
+	(void)file;
 	return 0;
 }
 
 /*-------------------------------------------------
 	core_stdio_fseek - core_file wrapper over fclose
 -------------------------------------------------*/
-static int core_stdio_fseek(core_file* file, int64_t offset, int whence) {
-	return core_stdio_fseek_impl((FILE*)file->argp, offset, whence);
+static int core_stdio_fseek(void* file, int64_t offset, int whence) {
+	return core_stdio_fseek_impl((FILE*)file, offset, whence);
+}
+
+/*-------------------------------------------------
+	core_legacy_fsize - legacy core_file wrapper
+-------------------------------------------------*/
+static uint64_t core_legacy_fsize(void *file) {
+	core_file* const core = (core_file*)file;
+	return core->fsize(core);
+}
+
+/*-------------------------------------------------
+	core_legacy_fread - legacy core_file wrapper
+-------------------------------------------------*/
+static size_t core_legacy_fread(void *ptr, size_t size, size_t nmemb, void *file) {
+	core_file* const core = (core_file*)file;
+	return core->fread(ptr, size, nmemb, core);
+}
+
+/*-------------------------------------------------
+	core_legacy_fclose - legacy core_file wrapper
+-------------------------------------------------*/
+static int core_legacy_fclose(void *file) {
+	core_file* const core = (core_file*)file;
+	return core->fclose(core);
+}
+
+/*-------------------------------------------------
+	core_legacy_fseek - legacy core_file wrapper
+-------------------------------------------------*/
+static int core_legacy_fseek(void* file, int64_t offset, int whence) {
+	core_file* const core = (core_file*)file;
+	return core->fseek(core, offset, whence);
 }

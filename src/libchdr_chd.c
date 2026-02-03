@@ -1871,7 +1871,6 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 {
 	chd_file *newchd = NULL;
 	chd_error err;
-	int intfnum;
 
 	/* verify parameters */
 	if (callbacks == NULL)
@@ -1961,6 +1960,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	/* find the codec interface */
 	if (newchd->header.version < 5)
 	{
+		size_t intfnum;
 		for (intfnum = 0; intfnum < ARRAY_LENGTH(codec_interfaces); intfnum++)
 		{
 			if (codec_interfaces[intfnum].compression == newchd->header.compression[0])
@@ -1983,12 +1983,13 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	}
 	else
 	{
-		int decompnum, needsinit;
+		size_t decompnum;
+		int needsinit;
 
 		/* verify the compression types and initialize the codecs */
 		for (decompnum = 0; decompnum < ARRAY_LENGTH(newchd->header.compression); decompnum++)
 		{
-			int i;
+			size_t i;
 			for (i = 0 ; i < ARRAY_LENGTH(codec_interfaces) ; i++)
 			{
 				if (codec_interfaces[i].compression == newchd->header.compression[decompnum])
@@ -2009,7 +2010,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 				if (newchd->codecintf[decompnum] == newchd->codecintf[i])
 				{
 					/* already initialized */
-					needsinit = 0;
+					needsinit = FALSE;
 					break;
 				}
       }
@@ -2163,12 +2164,13 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	}
 	else
 	{
-		int i;
+		size_t i;
 		/* Free the codecs */
 		for (i = 0 ; i < ARRAY_LENGTH(chd->codecintf); i++)
 		{
 			void* codec = NULL;
-			int j, needsfree;
+			size_t j;
+			int needsfree;
 
 			if (chd->codecintf[i] == NULL)
 				continue;
@@ -2179,7 +2181,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 			{
 				if (chd->codecintf[i] == chd->codecintf[j])
 				{
-					needsfree = 0;
+					needsfree = FALSE;
 					break;
 				}
 			}
@@ -2502,8 +2504,6 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 
 static chd_error header_validate(const chd_header *header)
 {
-	int intfnum;
-
 	/* require a valid version */
 	if (header->version == 0 || header->version > CHD_HEADER_VERSION)
 		return CHDERR_UNSUPPORTED_VERSION;
@@ -2519,6 +2519,8 @@ static chd_error header_validate(const chd_header *header)
 	/* Do not validate v5 header */
 	if (header->version <= 4)
 	{
+		size_t intfnum;
+
 		/* require valid flags */
 		if (header->flags & CHDFLAGS_UNDEFINED)
 			return CHDERR_INVALID_PARAMETER;

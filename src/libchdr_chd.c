@@ -1527,14 +1527,15 @@ static inline void map_extract(const uint8_t *base, map_entry *entry)
 /*-------------------------------------------------
     map_size_v5 - calculate CHDv5 map size
 -------------------------------------------------*/
-static inline int map_size_v5(chd_header* header)
+static inline int map_size_v5(chd_header* header, size_t *size)
 {
 	// Avoid overflow due to corrupted data.
-	const uint32_t max_hunkcount = (UINT32_MAX / header->mapentrybytes);
+	const size_t max_hunkcount = ((size_t)-1 / header->mapentrybytes);
 	if (header->hunkcount > max_hunkcount)
-		return -1;
+		return FALSE;
 
-	return header->hunkcount * header->mapentrybytes;
+	*size = (size_t)header->hunkcount * header->mapentrybytes;
+	return TRUE;
 }
 
 /*-------------------------------------------------
@@ -1601,7 +1602,6 @@ static inline int chd_compressed(chd_header* header) {
 
 static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 {
-	int result = 0;
 	uint32_t hunknum;
 	int repcount = 0;
 	uint8_t lastcomp = 0;
@@ -1619,8 +1619,9 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	struct huffman_decoder* decoder;
 	enum huffman_error err;
 	uint64_t curoffset;
-	int rawmapsize = map_size_v5(header);
-	if (rawmapsize < 0)
+	size_t rawmapsize;
+
+	if (!map_size_v5(header, &rawmapsize))
 		return CHDERR_INVALID_FILE;
 
 	if (!chd_compressed(header))
@@ -1632,13 +1633,15 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 		if (header->rawmap == NULL)
 			return CHDERR_OUT_OF_MEMORY;
 		core_fseek(&chd->file, header->mapoffset, SEEK_SET);
-		result = core_fread(&chd->file, header->rawmap, rawmapsize);
+		if (core_fread(&chd->file, header->rawmap, rawmapsize) != rawmapsize)
+			return CHDERR_READ_ERROR;
 		return CHDERR_NONE;
 	}
 
 	/* read the reader */
 	core_fseek(&chd->file, header->mapoffset, SEEK_SET);
-	result = core_fread(&chd->file, rawbuf, sizeof(rawbuf));
+	if (core_fread(&chd->file, rawbuf, sizeof(rawbuf)) != sizeof(rawbuf))
+		return CHDERR_READ_ERROR;
 	mapbytes = get_bigendian_uint32_t(&rawbuf[0]);
 	firstoffs = get_bigendian_uint48(&rawbuf[4]);
 	mapcrc = get_bigendian_uint16(&rawbuf[10]);
@@ -1653,7 +1656,11 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	if (compressed_ptr == NULL)
 		return CHDERR_OUT_OF_MEMORY;
 	core_fseek(&chd->file, header->mapoffset + 16, SEEK_SET);
-	result = core_fread(&chd->file, compressed_ptr, mapbytes);
+	if (core_fread(&chd->file, compressed_ptr, mapbytes) != mapbytes)
+	{
+		free(compressed_ptr);
+		return CHDERR_READ_ERROR;
+	}
 	bitbuf = create_bitstream(compressed_ptr, sizeof(uint8_t) * mapbytes);
 	header->rawmap = (uint8_t*)malloc(rawmapsize);
 	if (header->rawmap == NULL)
@@ -2066,16 +2073,13 @@ cleanup:
 
 CHD_EXPORT chd_error chd_precache(chd_file *chd)
 {
-	int64_t count;
-
 	if (chd->file_cache == NULL)
 	{
 		chd->file_cache = malloc(chd->file_size);
 		if (chd->file_cache == NULL)
 			return CHDERR_OUT_OF_MEMORY;
 		core_fseek(&chd->file, 0, SEEK_SET);
-		count = core_fread(&chd->file, chd->file_cache, chd->file_size);
-		if (count != chd->file_size)
+		if (core_fread(&chd->file, chd->file_cache, chd->file_size) != chd->file_size)
 		{
 			free(chd->file_cache);
 			chd->file_cache = NULL;
@@ -2432,7 +2436,6 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 {
 	metadata_entry metaentry;
 	chd_error err;
-	uint32_t count;
 
 	/* if we didn't find it, just return */
 	err = metadata_find_entry(chd, searchtag, searchindex, &metaentry);
@@ -2464,8 +2467,7 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 	/* read the metadata */
 	outputlen = MIN(outputlen, metaentry.length);
 	core_fseek(&chd->file, metaentry.offset + METADATA_HEADER_SIZE, SEEK_SET);
-	count = core_fread(&chd->file, output, outputlen);
-	if (count != outputlen)
+	if (core_fread(&chd->file, output, outputlen) != outputlen)
 		return CHDERR_READ_ERROR;
 
 	/* return the length of the data and the tag */
@@ -2584,7 +2586,6 @@ static uint32_t header_guess_unitbytes(chd_file *chd)
 static chd_error header_read(chd_file *chd, chd_header *header)
 {
 	uint8_t rawheader[CHD_MAX_HEADER_SIZE];
-	uint32_t count;
 
 	/* punt if NULL */
 	if (header == NULL)
@@ -2596,8 +2597,7 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 	/* seek and read */
 	core_fseek(&chd->file, 0, SEEK_SET);
-	count = core_fread(&chd->file, rawheader, sizeof(rawheader));
-	if (count != sizeof(rawheader))
+	if (core_fread(&chd->file, rawheader, sizeof(rawheader)) != sizeof(rawheader))
 		return CHDERR_READ_ERROR;
 
 	/* verify the tag */
@@ -2742,15 +2742,12 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 	}
 	else
 	{
-		size_t bytes;
-
 		/* make sure it isn't larger than the compressed buffer */
 		if (size > chd->header.hunkbytes)
 			return NULL;
 
 		core_fseek(&chd->file, offset, SEEK_SET);
-		bytes = core_fread(&chd->file, chd->compressed, size);
-		if (bytes != size)
+		if (core_fread(&chd->file, chd->compressed, size) != size)
 			return NULL;
 		return chd->compressed;
 	}
@@ -2772,11 +2769,8 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
-		size_t bytes;
-
 		core_fseek(&chd->file, offset, SEEK_SET);
-		bytes = core_fread(&chd->file, dest, size);
-		if (bytes != size)
+		if (core_fread(&chd->file, dest, size) != size)
 			return CHDERR_READ_ERROR;
 	}
 	return CHDERR_NONE;
@@ -2819,9 +2813,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				/* read it into the decompression buffer */
 				compressed_bytes = hunk_read_compressed(chd, entry->offset, entry->length);
 				if (compressed_bytes == NULL)
-					{
 					return CHDERR_READ_ERROR;
-					}
 
 				/* now decompress using the codec */
 				err = CHDERR_NONE;
@@ -3022,7 +3014,6 @@ static chd_error map_read(chd_file *chd)
 	uint8_t raw_map_entries[MAP_STACK_ENTRIES * MAP_ENTRY_SIZE];
 	uint64_t fileoffset, maxoffset = 0;
 	uint8_t cookie[MAP_ENTRY_SIZE];
-	uint32_t count;
 	chd_error err;
 	uint32_t i;
 
@@ -3042,8 +3033,7 @@ static chd_error map_read(chd_file *chd)
 
 		/* read that many */
 		core_fseek(&chd->file, fileoffset, SEEK_SET);
-		count = core_fread(&chd->file, raw_map_entries, entries * entrysize);
-		if (count != entries * entrysize)
+		if (core_fread(&chd->file, raw_map_entries, entries * entrysize) != entries * entrysize)
 		{
 			err = CHDERR_READ_ERROR;
 			goto cleanup;
@@ -3071,8 +3061,7 @@ static chd_error map_read(chd_file *chd)
 
 	/* verify the cookie */
 	core_fseek(&chd->file, fileoffset, SEEK_SET);
-	count = core_fread(&chd->file, &cookie, entrysize);
-	if (count != entrysize || memcmp(&cookie, END_OF_LIST_COOKIE, entrysize))
+	if (core_fread(&chd->file, &cookie, entrysize) != entrysize || memcmp(&cookie, END_OF_LIST_COOKIE, entrysize))
 	{
 		err = CHDERR_INVALID_FILE;
 		goto cleanup;
@@ -3111,13 +3100,11 @@ static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t m
 	while (metaentry->offset != 0)
 	{
 		uint8_t	raw_meta_header[METADATA_HEADER_SIZE];
-		uint32_t	count;
 
 		/* read the raw header */
 		if (core_fseek(&chd->file, metaentry->offset, SEEK_SET) != 0)
 			break;
-		count = core_fread(&chd->file, raw_meta_header, sizeof(raw_meta_header));
-		if (count != sizeof(raw_meta_header))
+		if (core_fread(&chd->file, raw_meta_header, sizeof(raw_meta_header)) != sizeof(raw_meta_header))
 			break;
 
 		/* extract the data */

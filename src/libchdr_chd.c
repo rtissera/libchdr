@@ -2787,11 +2787,6 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size)
 {
-#ifdef _MSC_VER
-	size_t bytes;
-#else
-	ssize_t bytes;
-#endif
 	if (chd->file_cache != NULL)
 	{
 		if ((offset + size) > chd->file_size || (offset + size) < offset)
@@ -2801,6 +2796,8 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 	}
 	else
 	{
+		size_t bytes;
+
 		/* make sure it isn't larger than the compressed buffer */
 		if (size > chd->header.hunkbytes)
 			return NULL;
@@ -2820,11 +2817,6 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 
 static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t size, uint8_t *dest)
 {
-#ifdef _MSC_VER
-	size_t bytes;
-#else
-	ssize_t bytes;
-#endif
 	if (chd->file_cache != NULL)
 	{
 		if ((offset + size) > chd->file_size || (offset + size) < offset)
@@ -2834,6 +2826,8 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
+		size_t bytes;
+
 		core_fseek(&chd->file, offset, SEEK_SET);
 		bytes = core_fread(&chd->file, dest, size);
 		if (bytes != size)

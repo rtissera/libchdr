@@ -2125,10 +2125,7 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 	void *file = NULL;
 
 	if (filename == NULL)
-	{
-		err = CHDERR_INVALID_PARAMETER;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
 
 	/* choose the proper mode */
 	switch(mode)
@@ -2137,17 +2134,13 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 			break;
 
 		default:
-			err = CHDERR_INVALID_PARAMETER;
-			goto cleanup;
+			EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
 	}
 
 	/* open the file */
 	file = core_stdio_fopen(filename);
 	if (file == NULL)
-	{
-		err = CHDERR_FILE_NOT_FOUND;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_FILE_NOT_FOUND);
 
 	/* now open the CHD */
 	return chd_open_core_file_callbacks(&core_stdio, file, mode, parent, chd);
@@ -2398,18 +2391,12 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header)
 	void *file = NULL;
 
 	if (filename == NULL)
-	{
-		err = CHDERR_INVALID_PARAMETER;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
 
 	/* open the file */
 	file = core_stdio_fopen(filename);
 	if (file == NULL)
-	{
-		err = CHDERR_FILE_NOT_FOUND;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_FILE_NOT_FOUND);
 
 	err = chd_read_header_core_file_callbacks(&core_stdio, file, header);
 
@@ -3029,10 +3016,7 @@ static chd_error map_read(chd_file *chd)
 
 		/* read that many */
 		if (!seek_and_read(chd, fileoffset, raw_map_entries, entries * entrysize))
-		{
-			err = CHDERR_READ_ERROR;
-			goto cleanup;
-		}
+			EARLY_EXIT(err = CHDERR_READ_ERROR);
 		fileoffset += entries * entrysize;
 
 		/* process that many */
@@ -3056,17 +3040,11 @@ static chd_error map_read(chd_file *chd)
 
 	/* verify the cookie */
 	if (!seek_and_read(chd, fileoffset, &cookie, entrysize) || memcmp(&cookie, END_OF_LIST_COOKIE, entrysize))
-	{
-		err = CHDERR_INVALID_FILE;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_INVALID_FILE);
 
 	/* verify the length */
 	if (maxoffset > chd->file_size)
-	{
-		err = CHDERR_INVALID_FILE;
-		goto cleanup;
-	}
+		EARLY_EXIT(err = CHDERR_INVALID_FILE);
 	return CHDERR_NONE;
 
 cleanup:

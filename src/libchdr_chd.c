@@ -2626,116 +2626,115 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 	/* extract the direct data */
 	memset(header, 0, sizeof(*header));
-	header->length        = get_bigendian_uint32_t(&rawheader[8]);
-	header->version       = get_bigendian_uint32_t(&rawheader[12]);
+	header->length  = get_bigendian_uint32_t(&rawheader[8]);
+	header->version = get_bigendian_uint32_t(&rawheader[12]);
 
-	/* make sure it's a version we understand */
-	if (header->version == 0 || header->version > CHD_HEADER_VERSION)
-		return CHDERR_UNSUPPORTED_VERSION;
-
-	/* make sure the length is expected */
-	if ((header->version == 1 && header->length != CHD_V1_HEADER_SIZE) ||
-		(header->version == 2 && header->length != CHD_V2_HEADER_SIZE) ||
-		(header->version == 3 && header->length != CHD_V3_HEADER_SIZE) ||
-		(header->version == 4 && header->length != CHD_V4_HEADER_SIZE) ||
-		(header->version == 5 && header->length != CHD_V5_HEADER_SIZE))
-
-		return CHDERR_INVALID_DATA;
-
-	/* extract the common data */
-	header->flags         	= get_bigendian_uint32_t(&rawheader[16]);
-	header->compression[0]	= get_bigendian_uint32_t(&rawheader[20]);
-	header->compression[1]	= CHD_CODEC_NONE;
-	header->compression[2]	= CHD_CODEC_NONE;
-	header->compression[3]	= CHD_CODEC_NONE;
-
-	/* extract the V1/V2-specific data */
-	if (header->version < 3)
+	switch (header->version)
 	{
-		int seclen = (header->version == 1) ? CHD_V1_SECTOR_SIZE : get_bigendian_uint32_t(&rawheader[76]);
-		header->obsolete_hunksize  = get_bigendian_uint32_t(&rawheader[24]);
-		header->totalhunks         = get_bigendian_uint32_t(&rawheader[28]);
-		header->obsolete_cylinders = get_bigendian_uint32_t(&rawheader[32]);
-		header->obsolete_heads     = get_bigendian_uint32_t(&rawheader[36]);
-		header->obsolete_sectors   = get_bigendian_uint32_t(&rawheader[40]);
-		memcpy(header->md5, &rawheader[44], CHD_MD5_BYTES);
-		memcpy(header->parentmd5, &rawheader[60], CHD_MD5_BYTES);
-		header->logicalbytes = (uint64_t)header->obsolete_cylinders * (uint64_t)header->obsolete_heads * (uint64_t)header->obsolete_sectors * (uint64_t)seclen;
-		header->hunkbytes = seclen * header->obsolete_hunksize;
-		header->unitbytes          = header_guess_unitbytes(chd);
-		if (header->unitbytes == 0)
-			return CHDERR_INVALID_DATA;
-		header->unitcount          = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
-		header->metaoffset = 0;
-	}
+		default:
+			/* Unknown version */
+			return CHDERR_UNSUPPORTED_VERSION;
 
-	/* extract the V3-specific data */
-	else if (header->version == 3)
-	{
-		header->totalhunks   = get_bigendian_uint32_t(&rawheader[24]);
-		header->logicalbytes = get_bigendian_uint64_t(&rawheader[28]);
-		header->metaoffset   = get_bigendian_uint64_t(&rawheader[36]);
-		memcpy(header->md5, &rawheader[44], CHD_MD5_BYTES);
-		memcpy(header->parentmd5, &rawheader[60], CHD_MD5_BYTES);
-		header->hunkbytes    = get_bigendian_uint32_t(&rawheader[76]);
-		header->unitbytes    = header_guess_unitbytes(chd);
-		if (header->unitbytes == 0)
-			return CHDERR_INVALID_DATA;
-		header->unitcount    = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
-		memcpy(header->sha1, &rawheader[80], CHD_SHA1_BYTES);
-		memcpy(header->parentsha1, &rawheader[100], CHD_SHA1_BYTES);
-	}
+		case 1:
+		case 2:
+			/* make sure the length is expected */
+			if ((header->version == 1 && header->length != CHD_V1_HEADER_SIZE) ||
+				(header->version == 2 && header->length != CHD_V2_HEADER_SIZE))
+				return CHDERR_INVALID_DATA;
 
-	/* extract the V4-specific data */
-	else if (header->version == 4)
-	{
-		header->totalhunks   = get_bigendian_uint32_t(&rawheader[24]);
-		header->logicalbytes = get_bigendian_uint64_t(&rawheader[28]);
-		header->metaoffset   = get_bigendian_uint64_t(&rawheader[36]);
-		header->hunkbytes    = get_bigendian_uint32_t(&rawheader[44]);
-		header->unitbytes    = header_guess_unitbytes(chd);
-		if (header->unitbytes == 0)
-			return CHDERR_INVALID_DATA;
-		header->unitcount    = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
-		memcpy(header->sha1, &rawheader[48], CHD_SHA1_BYTES);
-		memcpy(header->parentsha1, &rawheader[68], CHD_SHA1_BYTES);
-		memcpy(header->rawsha1, &rawheader[88], CHD_SHA1_BYTES);
-	}
+			header->flags              = get_bigendian_uint32_t(&rawheader[16]);
+			header->compression[0]     = get_bigendian_uint32_t(&rawheader[20]);
+			header->obsolete_hunksize  = get_bigendian_uint32_t(&rawheader[24]);
+			header->totalhunks         = get_bigendian_uint32_t(&rawheader[28]);
+			header->obsolete_cylinders = get_bigendian_uint32_t(&rawheader[32]);
+			header->obsolete_heads     = get_bigendian_uint32_t(&rawheader[36]);
+			header->obsolete_sectors   = get_bigendian_uint32_t(&rawheader[40]);
+			memcpy(header->md5, &rawheader[44], CHD_MD5_BYTES);
+			memcpy(header->parentmd5, &rawheader[60], CHD_MD5_BYTES);
+			{
+				uint32_t seclen = (header->version == 1) ? CHD_V1_SECTOR_SIZE : get_bigendian_uint32_t(&rawheader[76]);
+				header->logicalbytes = (uint64_t)header->obsolete_cylinders * (uint64_t)header->obsolete_heads * (uint64_t)header->obsolete_sectors * (uint64_t)seclen;
+				header->hunkbytes = seclen * header->obsolete_hunksize;
+			}
+			header->unitbytes          = header_guess_unitbytes(chd);
+			if (header->unitbytes == 0)
+				return CHDERR_INVALID_DATA;
+			header->unitcount          = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
+			header->metaoffset = 0;
 
-	/* extract the V5-specific data */
-	else if (header->version == 5)
-	{
-		/* TODO */
-		header->compression[0]  = get_bigendian_uint32_t(&rawheader[16]);
-		header->compression[1]  = get_bigendian_uint32_t(&rawheader[20]);
-		header->compression[2]  = get_bigendian_uint32_t(&rawheader[24]);
-		header->compression[3]  = get_bigendian_uint32_t(&rawheader[28]);
-		header->logicalbytes    = get_bigendian_uint64_t(&rawheader[32]);
-		header->mapoffset       = get_bigendian_uint64_t(&rawheader[40]);
-		header->metaoffset      = get_bigendian_uint64_t(&rawheader[48]);
-		header->hunkbytes       = get_bigendian_uint32_t(&rawheader[56]);
-		if (header->hunkbytes == 0)
-			return CHDERR_INVALID_DATA;
-		header->hunkcount       = (header->logicalbytes + header->hunkbytes - 1) / header->hunkbytes;
-		header->unitbytes       = get_bigendian_uint32_t(&rawheader[60]);
-		if (header->unitbytes == 0)
-			return CHDERR_INVALID_DATA;
-		header->unitcount       = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
-		memcpy(header->sha1, &rawheader[84], CHD_SHA1_BYTES);
-		memcpy(header->parentsha1, &rawheader[104], CHD_SHA1_BYTES);
-		memcpy(header->rawsha1, &rawheader[64], CHD_SHA1_BYTES);
+			break;
 
-		/* determine properties of map entries */
-		header->mapentrybytes = chd_compressed(header) ? 12 : 4;
+		case 3:
+			if (header->length != CHD_V3_HEADER_SIZE)
+				return CHDERR_INVALID_DATA;
 
-		/* hack */
-		header->totalhunks 		= header->hunkcount;
-	}
+			header->flags          = get_bigendian_uint32_t(&rawheader[16]);
+			header->compression[0] = get_bigendian_uint32_t(&rawheader[20]);
+			header->totalhunks     = get_bigendian_uint32_t(&rawheader[24]);
+			header->logicalbytes   = get_bigendian_uint64_t(&rawheader[28]);
+			header->metaoffset     = get_bigendian_uint64_t(&rawheader[36]);
+			memcpy(header->md5, &rawheader[44], CHD_MD5_BYTES);
+			memcpy(header->parentmd5, &rawheader[60], CHD_MD5_BYTES);
+			header->hunkbytes      = get_bigendian_uint32_t(&rawheader[76]);
+			header->unitbytes      = header_guess_unitbytes(chd);
+			if (header->unitbytes == 0)
+				return CHDERR_INVALID_DATA;
+			header->unitcount      = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
+			memcpy(header->sha1, &rawheader[80], CHD_SHA1_BYTES);
+			memcpy(header->parentsha1, &rawheader[100], CHD_SHA1_BYTES);
 
-	/* Unknown version */
-	else
-	{
-		/* TODO */
+			break;
+
+		case 4:
+			if (header->length != CHD_V4_HEADER_SIZE)
+				return CHDERR_INVALID_DATA;
+
+			header->flags          = get_bigendian_uint32_t(&rawheader[16]);
+			header->compression[0] = get_bigendian_uint32_t(&rawheader[20]);
+			header->totalhunks     = get_bigendian_uint32_t(&rawheader[24]);
+			header->logicalbytes   = get_bigendian_uint64_t(&rawheader[28]);
+			header->metaoffset     = get_bigendian_uint64_t(&rawheader[36]);
+			header->hunkbytes      = get_bigendian_uint32_t(&rawheader[44]);
+			header->unitbytes      = header_guess_unitbytes(chd);
+			if (header->unitbytes == 0)
+				return CHDERR_INVALID_DATA;
+			header->unitcount      = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
+			memcpy(header->sha1, &rawheader[48], CHD_SHA1_BYTES);
+			memcpy(header->parentsha1, &rawheader[68], CHD_SHA1_BYTES);
+			memcpy(header->rawsha1, &rawheader[88], CHD_SHA1_BYTES);
+
+			break;
+
+		case 5:
+			if (header->length != CHD_V5_HEADER_SIZE)
+				return CHDERR_INVALID_DATA;
+
+			header->compression[0] = get_bigendian_uint32_t(&rawheader[16]);
+			header->compression[1] = get_bigendian_uint32_t(&rawheader[20]);
+			header->compression[2] = get_bigendian_uint32_t(&rawheader[24]);
+			header->compression[3] = get_bigendian_uint32_t(&rawheader[28]);
+			header->logicalbytes   = get_bigendian_uint64_t(&rawheader[32]);
+			header->mapoffset      = get_bigendian_uint64_t(&rawheader[40]);
+			header->metaoffset     = get_bigendian_uint64_t(&rawheader[48]);
+			header->hunkbytes      = get_bigendian_uint32_t(&rawheader[56]);
+			if (header->hunkbytes == 0)
+				return CHDERR_INVALID_DATA;
+			header->hunkcount      = (header->logicalbytes + header->hunkbytes - 1) / header->hunkbytes;
+			header->unitbytes      = get_bigendian_uint32_t(&rawheader[60]);
+			if (header->unitbytes == 0)
+				return CHDERR_INVALID_DATA;
+			header->unitcount      = (header->logicalbytes + header->unitbytes - 1) / header->unitbytes;
+			memcpy(header->sha1, &rawheader[84], CHD_SHA1_BYTES);
+			memcpy(header->parentsha1, &rawheader[104], CHD_SHA1_BYTES);
+			memcpy(header->rawsha1, &rawheader[64], CHD_SHA1_BYTES);
+
+			/* determine properties of map entries */
+			header->mapentrybytes  = chd_compressed(header) ? 12 : 4;
+
+			/* hack */
+			header->totalhunks     = header->hunkcount;
+
+			break;
 	}
 
 	/* guess it worked */

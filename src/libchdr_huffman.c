@@ -101,8 +101,7 @@
 #include <string.h>
 
 #include <libchdr/huffman.h>
-
-#define MAX(x,y) ((x) > (y) ? (x) : (y))
+#include <libchdr/macros.h>
 
 /***************************************************************************
  *  MACROS

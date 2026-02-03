@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <libchdr/flac.h>
+#include <libchdr/macros.h>
 #define DR_FLAC_IMPLEMENTATION
 #define DR_FLAC_NO_STDIO
 #include <dr_libs/dr_flac.h>
@@ -127,9 +128,6 @@ int flac_decoder_reset(flac_decoder* decoder, uint32_t sample_rate, uint8_t num_
  *  sound stream
  *-------------------------------------------------
  */
-
-#define MIN(x, y) ((x) < (y) ? (x) : (y))
-#define ARRAY_LENGTH(x) (sizeof(x)/sizeof(x[0]))
 
 int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uint32_t num_frames, int swap_endian)
 {

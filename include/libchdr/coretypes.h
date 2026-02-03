@@ -8,14 +8,6 @@
 #include <streams/file_stream_transforms.h>
 #endif
 
-#ifndef ARRAY_LENGTH
-#define ARRAY_LENGTH(x) (sizeof(x)/sizeof(x[0]))
-#endif
-
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
-#endif
-
 typedef struct chd_core_file_callbacks {
 	/*
 	 * return the size of a given file as a 64-bit unsigned integer.

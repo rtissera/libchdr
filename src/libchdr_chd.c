@@ -48,6 +48,7 @@
 #include <libchdr/cdrom.h>
 #include <libchdr/flac.h>
 #include <libchdr/huffman.h>
+#include <libchdr/macros.h>
 #include <zstd.h>
 
 #include "LzmaDec.h"
@@ -60,11 +61,6 @@
 #undef FALSE
 #define TRUE 1
 #define FALSE 0
-
-#undef MAX
-#undef MIN
-#define MAX(x, y) (((x) > (y)) ? (x) : (y))
-#define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 #define SHA1_DIGEST_SIZE 20
 

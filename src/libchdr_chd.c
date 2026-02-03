@@ -2533,30 +2533,6 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 }
 
 /***************************************************************************
-    CODEC INTERFACES
-***************************************************************************/
-
-/*-------------------------------------------------
-    chd_codec_config - set internal codec
-    parameters
--------------------------------------------------*/
-
-CHD_EXPORT chd_error chd_codec_config(chd_file *chd, int param, void *config)
-{
-	return CHDERR_INVALID_PARAMETER;
-}
-
-/*-------------------------------------------------
-    chd_get_codec_name - get the name of a
-    particular codec
--------------------------------------------------*/
-
-CHD_EXPORT const char *chd_get_codec_name(uint32_t codec)
-{
-	return "Unknown";
-}
-
-/***************************************************************************
     INTERNAL HEADER OPERATIONS
 ***************************************************************************/
 

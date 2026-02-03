@@ -422,17 +422,6 @@ CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer);
 /* get indexed metadata of a particular sort */
 CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_t searchindex, void *output, uint32_t outputlen, uint32_t *resultlen, uint32_t *resulttag, uint8_t *resultflags);
 
-
-
-
-/* ----- codec interfaces ----- */
-
-/* set internal codec parameters */
-CHD_EXPORT chd_error chd_codec_config(chd_file *chd, int param, void *config);
-
-/* return a string description of a codec */
-CHD_EXPORT const char *chd_get_codec_name(uint32_t codec);
-
 #ifdef __cplusplus
 }
 #endif

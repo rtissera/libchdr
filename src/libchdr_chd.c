@@ -2621,7 +2621,7 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 		return CHDERR_READ_ERROR;
 
 	/* verify the tag */
-	if (strncmp((char *)rawheader, "MComprHD", 8) != 0)
+	if (memcmp(rawheader, "MComprHD", 8) != 0)
 		return CHDERR_INVALID_DATA;
 
 	/* extract the direct data */

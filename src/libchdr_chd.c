@@ -337,7 +337,7 @@ static void *core_stdio_fopen(char const *path);
 static uint64_t core_stdio_fsize(void *file);
 static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, void *file);
 static int core_stdio_fclose(void *file);
-static int core_stdio_fclose_nonowner(void *file); // alternate fclose used by chd_open_file
+static int core_stdio_fclose_nonowner(void *file); /* alternate fclose used by chd_open_file */
 static int core_stdio_fseek(void* file, int64_t offset, int whence);
 
 /* Legacy core_file wrappers */
@@ -895,7 +895,7 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 	uint32_t cur;
 	chd_error result;
 
-	// first import the tree
+	/* first import the tree */
 	enum huffman_error err = huffman_import_tree_huffman(huff_codec->decoder, bitbuf);
 	if (err != HUFFERR_NONE)
 	{
@@ -903,7 +903,7 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 		return CHDERR_DECOMPRESSION_ERROR;
 	}
 
-	// then decode the data
+	/* then decode the data */
 	for (cur = 0; cur < destlen; cur++)
 		dest[cur] = huffman_decode_one(huff_codec->decoder, bitbuf);
 	bitstream_flush(bitbuf);
@@ -982,7 +982,7 @@ static chd_error flac_codec_decompress(void *codec, const uint8_t *src, uint32_t
 
 static uint32_t cdfl_codec_blocksize(uint32_t bytes)
 {
-	// for CDs it seems that CD_MAX_SECTOR_DATA is the right target
+	/* for CDs it seems that CD_MAX_SECTOR_DATA is the right target */
 	uint32_t blocksize = bytes / 4;
 	while (blocksize > CD_MAX_SECTOR_DATA)
 		blocksize /= 2;
@@ -1124,7 +1124,7 @@ static chd_error zstd_codec_decompress(void* codec, const uint8_t *src, uint32_t
 	/* initialize */
 	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
 
-	//reset decompressor
+	/* reset decompressor */
 	size_t zstd_res =  ZSTD_initDStream(zstd_codec->dstream);
 
 	if (ZSTD_isError(zstd_res)) 
@@ -1540,7 +1540,7 @@ static inline void map_extract(const uint8_t *base, map_entry *entry)
 -------------------------------------------------*/
 static inline int map_size_v5(chd_header* header, size_t *size)
 {
-	// Avoid overflow due to corrupted data.
+	/* Avoid overflow due to corrupted data. */
 	const size_t max_hunkcount = ((size_t)-1 / header->mapentrybytes);
 	if (header->hunkcount > max_hunkcount)
 		return FALSE;

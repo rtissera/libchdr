@@ -288,15 +288,15 @@ static drflac_bool32 flac_decoder_seek_callback(void *userdata, int offset, drfl
 		uint32_t pos = offset;
 		if (pos <= length) {
 			decoder->compressed_offset = pos;
-			return 1;
+			return DRFLAC_TRUE;
 		}
 	} else if (origin == drflac_seek_origin_current) {
 		uint32_t pos = decoder->compressed_offset + offset;
 		if (pos <= length) {
 			decoder->compressed_offset = pos;
-			return 1;
+			return DRFLAC_TRUE;
 		}
 	}
-	return 0;
+	return DRFLAC_FALSE;
 }
 

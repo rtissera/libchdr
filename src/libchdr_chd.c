@@ -69,12 +69,6 @@
 #define SHA1_DIGEST_SIZE 20
 
 /***************************************************************************
-    DEBUGGING
-***************************************************************************/
-
-#define PRINTF_MAX_HUNK				(0)
-
-/***************************************************************************
     CONSTANTS
 ***************************************************************************/
 
@@ -310,14 +304,6 @@ struct _chd_file
 
 	map_entry *				map;			/* array of map entries */
 
-#ifdef NEED_CACHE_HUNK
-	uint8_t *					cache;			/* hunk cache pointer */
-	uint32_t					cachehunk;		/* index of currently cached hunk */
-
-	uint8_t *					compare;		/* hunk compare pointer */
-	uint32_t					comparehunk;	/* index of current compare data */
-#endif
-
 	uint8_t *					compressed;		/* pointer to buffer for compressed data */
 	const codec_interface *	codecintf[4];	/* interface to the codec */
 
@@ -330,10 +316,6 @@ struct _chd_file
 	cdlz_codec_data			cdlz_codec_data;		/* cdlz codec data */
 	cdfl_codec_data			cdfl_codec_data;		/* cdfl codec data */
 	cdzs_codec_data			cdzs_codec_data;		/* cdzs codec data */
-
-#ifdef NEED_CACHE_HUNK
-	uint32_t					maxhunk;		/* maximum hunk accessed */
-#endif
 
 	uint8_t *					file_cache;		/* cache of underlying file */
 };
@@ -369,9 +351,6 @@ static chd_error header_validate(const chd_header *header);
 static chd_error header_read(chd_file *chd, chd_header *header);
 
 /* internal hunk read/write */
-#ifdef NEED_CACHE_HUNK
-static chd_error hunk_read_into_cache(chd_file *chd, uint32_t hunknum);
-#endif
 static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest);
 
 /* internal map access */
@@ -1956,16 +1935,6 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
 
-#ifdef NEED_CACHE_HUNK
-	/* allocate and init the hunk cache */
-	newchd->cache = (uint8_t *)malloc(newchd->header.hunkbytes);
-	newchd->compare = (uint8_t *)malloc(newchd->header.hunkbytes);
-	if (newchd->cache == NULL || newchd->compare == NULL)
-		EARLY_EXIT(err = CHDERR_OUT_OF_MEMORY);
-	newchd->cachehunk = ~0;
-	newchd->comparehunk = ~0;
-#endif
-
 	/* allocate the temporary compressed buffer */
 	newchd->compressed = (uint8_t *)malloc(newchd->header.hunkbytes);
 	if (newchd->compressed == NULL)
@@ -2256,14 +2225,6 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->compressed != NULL)
 		free(chd->compressed);
 
-#ifdef NEED_CACHE_HUNK
-	/* free the hunk cache and compare data */
-	if (chd->compare != NULL)
-		free(chd->compare);
-	if (chd->cache != NULL)
-		free(chd->cache);
-#endif
-
 	/* free the hunk map */
 	if (chd->map != NULL)
 		free(chd->map);
@@ -2272,9 +2233,6 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->file.callbacks != NULL)
 		core_fclose(&chd->file);
 
-#ifdef NEED_CACHE_HUNK
-	if (PRINTF_MAX_HUNK) printf("Max hunk = %d/%d\n", chd->maxhunk, chd->header.totalhunks);
-#endif
 	if (chd->file_cache)
 		free(chd->file_cache);
 
@@ -2824,36 +2782,6 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	return CHDERR_NONE;
 }
 
-#ifdef NEED_CACHE_HUNK
-/*-------------------------------------------------
-    hunk_read_into_cache - read a hunk into
-    the CHD's hunk cache
--------------------------------------------------*/
-
-static chd_error hunk_read_into_cache(chd_file *chd, uint32_t hunknum)
-{
-	chd_error err;
-
-	/* track the max */
-	if (hunknum > chd->maxhunk)
-		chd->maxhunk = hunknum;
-
-	/* if we're already in the cache, we're done */
-	if (chd->cachehunk == hunknum)
-		return CHDERR_NONE;
-	chd->cachehunk = ~0;
-
-	/* otherwise, read the data */
-	err = hunk_read_into_memory(chd, hunknum, chd->cache);
-	if (err != CHDERR_NONE)
-		return err;
-
-	/* mark the hunk successfully cached in */
-	chd->cachehunk = hunknum;
-	return CHDERR_NONE;
-}
-#endif
-
 /*-------------------------------------------------
     hunk_read_into_memory - read a hunk into
     memory at the given location
@@ -2921,10 +2849,6 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 			/* self-referenced data */
 			case V34_MAP_ENTRY_TYPE_SELF_HUNK:
-#ifdef NEED_CACHE_HUNK
-				if (chd->cachehunk == entry->offset && dest == chd->cache)
-					break;
-#endif
 				return hunk_read_into_memory(chd, entry->offset, dest);
 
 			/* parent-referenced data */

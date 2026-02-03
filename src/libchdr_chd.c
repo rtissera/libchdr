@@ -1976,7 +1976,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 		/* initialize the codec */
 		if (newchd->codecintf[0]->init != NULL)
 		{
-			err = (*newchd->codecintf[0]->init)(&newchd->zlib_codec_data, newchd->header.hunkbytes);
+			err = newchd->codecintf[0]->init(&newchd->zlib_codec_data, newchd->header.hunkbytes);
 			if (err != CHDERR_NONE)
 				EARLY_EXIT(err);
 		}
@@ -2061,7 +2061,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 				if (codec == NULL)
 					EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
 
-				err = (*newchd->codecintf[decompnum]->init)(codec, newchd->header.hunkbytes);
+				err = newchd->codecintf[decompnum]->init(codec, newchd->header.hunkbytes);
 				if (err != CHDERR_NONE)
 					EARLY_EXIT(err);
 			}
@@ -2160,7 +2160,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->header.version < 5)
 	{
 		if (chd->codecintf[0] != NULL && chd->codecintf[0]->free != NULL)
-			(*chd->codecintf[0]->free)(&chd->zlib_codec_data);
+			chd->codecintf[0]->free(&chd->zlib_codec_data);
 	}
 	else
 	{
@@ -2229,7 +2229,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 
 			if (codec)
 			{
-				(*chd->codecintf[i]->free)(codec);
+				chd->codecintf[i]->free(codec);
 			}
 		}
 
@@ -2832,7 +2832,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				err = CHDERR_NONE;
 				codec = &chd->zlib_codec_data;
 				if (chd->codecintf[0]->decompress != NULL)
-					err = (*chd->codecintf[0]->decompress)(codec, compressed_bytes, entry->length, dest, chd->header.hunkbytes);
+					err = chd->codecintf[0]->decompress(codec, compressed_bytes, entry->length, dest, chd->header.hunkbytes);
 				if (err != CHDERR_NONE)
 					return err;
 				break;

@@ -42,12 +42,12 @@
 #ifndef __CHD_H__
 #define __CHD_H__
 
+#include <libchdr/coretypes.h>
+#include <libchdr/chdconfig.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <libchdr/coretypes.h>
-#include <libchdr/chdconfig.h>
 
 /***************************************************************************
 

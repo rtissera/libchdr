@@ -255,6 +255,9 @@ extern "C" {
 /* A/V laserdisc frame metadata */
 #define AV_LD_METADATA_TAG			CHD_MAKE_TAG('A','V','L','D')
 
+/* DVD metadata */
+#define DVD_METADATA_TAG			CHD_MAKE_TAG('D','V','D',' ')
+
 /* CHD open values */
 #define CHD_OPEN_READ				1
 #define CHD_OPEN_READWRITE			2

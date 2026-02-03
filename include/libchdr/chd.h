@@ -130,17 +130,17 @@ extern "C" {
     V5 header:
 
     [  0] char   tag[8];        // 'MComprHD'
-    [  8] uint32_t_t length;        // length of header (including tag and length fields)
-    [ 12] uint32_t_t version;       // drive format version
-    [ 16] uint32_t_t compressors[4];// which custom compressors are used?
-    [ 32] uint64_t_t logicalbytes;  // logical size of the data (in bytes)
-    [ 40] uint64_t_t mapoffset;     // offset to the map
-    [ 48] uint64_t_t metaoffset;    // offset to the first blob of metadata
-    [ 56] uint32_t_t hunkbytes;     // number of bytes per hunk (512k maximum)
-    [ 60] uint32_t_t unitbytes;     // number of bytes per unit within each hunk
-    [ 64] uint8_t_t  rawsha1[20];   // raw data SHA1
-    [ 84] uint8_t_t  sha1[20];      // combined raw+meta SHA1
-    [104] uint8_t_t  parentsha1[20];// combined raw+meta SHA1 of parent
+    [  8] uint32_t length;        // length of header (including tag and length fields)
+    [ 12] uint32_t version;       // drive format version
+    [ 16] uint32_t compressors[4];// which custom compressors are used?
+    [ 32] uint64_t logicalbytes;  // logical size of the data (in bytes)
+    [ 40] uint64_t mapoffset;     // offset to the map
+    [ 48] uint64_t metaoffset;    // offset to the first blob of metadata
+    [ 56] uint32_t hunkbytes;     // number of bytes per hunk (512k maximum)
+    [ 60] uint32_t unitbytes;     // number of bytes per unit within each hunk
+    [ 64] uint8_t  rawsha1[20];   // raw data SHA1
+    [ 84] uint8_t  sha1[20];      // combined raw+meta SHA1
+    [104] uint8_t  parentsha1[20];// combined raw+meta SHA1 of parent
     [124] (V5 header length)
 
     If parentsha1 != 0, we have a parent (no need for flags)
@@ -148,22 +148,22 @@ extern "C" {
 
     V5 uncompressed map format:
 
-    [  0] uint32_t_t offset;        // starting offset / hunk size
+    [  0] uint32_t offset;        // starting offset / hunk size
 
     V5 compressed map format header:
 
-    [  0] uint32_t_t length;        // length of compressed map
+    [  0] uint32_t length;        // length of compressed map
     [  4] UINT48 datastart;     // offset of first block
     [ 10] uint16_t crc;           // crc-16 of the map
-    [ 12] uint8_t_t lengthbits;     // bits used to encode complength
-    [ 13] uint8_t_t hunkbits;       // bits used to encode self-refs
-    [ 14] uint8_t_t parentunitbits; // bits used to encode parent unit refs
-    [ 15] uint8_t_t reserved;       // future use
+    [ 12] uint8_t lengthbits;     // bits used to encode complength
+    [ 13] uint8_t hunkbits;       // bits used to encode self-refs
+    [ 14] uint8_t parentunitbits; // bits used to encode parent unit refs
+    [ 15] uint8_t reserved;       // future use
     [ 16] (compressed header length)
 
     Each compressed map entry, once expanded, looks like:
 
-    [  0] uint8_t_t compression;    // compression type
+    [  0] uint8_t compression;    // compression type
     [  1] UINT24 complength;    // compressed length
     [  4] UINT48 offset;        // offset
     [ 10] uint16_t crc;           // crc-16 of the data

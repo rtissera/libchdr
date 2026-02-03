@@ -1656,7 +1656,7 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 		return CHDERR_NONE;
 	}
 
-	/* read the reader */
+	/* read the header */
 	core_fseek(&chd->file, header->mapoffset, SEEK_SET);
 	if (core_fread(&chd->file, rawbuf, sizeof(rawbuf)) != sizeof(rawbuf))
 		return CHDERR_READ_ERROR;

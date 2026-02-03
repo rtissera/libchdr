@@ -128,26 +128,28 @@ int flac_decoder_reset(flac_decoder* decoder, uint32_t sample_rate, uint8_t num_
  *-------------------------------------------------
  */
 
-int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uint32_t num_samples, int swap_endian)
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#define ARRAY_LENGTH(x) (sizeof(x)/sizeof(x[0]))
+
+int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uint32_t num_frames, int swap_endian)
 {
-#define	BUFFER	2352	/* bytes per CD audio sector */
-	int16_t buffer[BUFFER];
-	uint32_t buf_samples = BUFFER / channels(decoder);
+	int16_t buffer[2352 / sizeof(int16_t)];	/* 2352 is the number of bytes per CD audio sector */
+	uint32_t buf_frames = ARRAY_LENGTH(buffer) / channels(decoder);
 
 	/* configure the uncompressed buffer */
 	memset(decoder->uncompressed_start, 0, sizeof(decoder->uncompressed_start));
 	decoder->uncompressed_start[0] = samples;
 	decoder->uncompressed_offset = 0;
-	decoder->uncompressed_length = num_samples;
+	decoder->uncompressed_length = num_frames;
 	decoder->uncompressed_swap = swap_endian;
 
 	/* loop until we get everything we want */
 	while (decoder->uncompressed_offset < decoder->uncompressed_length) {
-		uint32_t frames = (num_samples < buf_samples ? num_samples : buf_samples);
-		if (!drflac_read_pcm_frames_s16((drflac*)decoder->decoder, frames, buffer))
+		uint32_t frames_to_do = MIN(num_frames, buf_frames);
+		if (!drflac_read_pcm_frames_s16((drflac*)decoder->decoder, frames_to_do, buffer))
 			return 0;
-		flac_decoder_write_callback(decoder, buffer, frames*sizeof(*buffer)*channels(decoder));
-		num_samples -= frames;
+		flac_decoder_write_callback(decoder, buffer, frames_to_do*sizeof(*buffer)*channels(decoder));
+		num_frames -= frames_to_do;
 	}
 	return 1;
 }
@@ -183,8 +185,6 @@ uint32_t flac_decoder_finish(flac_decoder* decoder)
  *  stream
  *-------------------------------------------------
  */
-
-#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 static size_t flac_decoder_read_callback(void *userdata, void *buffer, size_t bytes)
 {

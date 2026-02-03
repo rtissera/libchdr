@@ -1092,7 +1092,9 @@ static chd_error zstd_codec_init(void* codec, uint32_t hunkbytes)
 	(void)hunkbytes;
 	zstd_codec->dstream = ZSTD_createDStream();
 	if (!zstd_codec->dstream) {
+#if 0
 		printf("NO DSTREAM CREATED!\n");
+#endif
 		return CHDERR_DECOMPRESSION_ERROR;
 	}
 	return CHDERR_NONE;
@@ -1128,7 +1130,9 @@ static chd_error zstd_codec_decompress(void* codec, const uint8_t *src, uint32_t
 
 	if (ZSTD_isError(zstd_res)) 
 	{
+#if 0
 		printf("INITI DSTREAM FAILED!\n");
+#endif
 		return CHDERR_DECOMPRESSION_ERROR;
 	}
 
@@ -1145,13 +1149,17 @@ static chd_error zstd_codec_decompress(void* codec, const uint8_t *src, uint32_t
 		zstd_res = ZSTD_decompressStream(zstd_codec->dstream, &output, &input);
 		if (ZSTD_isError(zstd_res))
 		{
+#if 0
 			printf("DECOMPRESSION ERROR IN LOOP\n");
+#endif
 			return CHDERR_DECOMPRESSION_ERROR;
 		}
 	}
 	if (output.pos != output.size)
 	{
+#if 0
 		printf("OUTPUT DOESN'T MATCH!\n");
+#endif
 		return CHDERR_DECOMPRESSION_ERROR;
 	}
 	return CHDERR_NONE;

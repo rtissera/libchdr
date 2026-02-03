@@ -929,9 +929,15 @@ static uint32_t flac_codec_blocksize(uint32_t bytes)
 	return blocksize;
 }
 
-static chd_error flac_codec_init(void *codec, uint32_t hunkbytes)
+static int flac_detect_native_endian(void)
 {
 	uint16_t native_endian = 0;
+	*(uint8_t *)(&native_endian) = 1;
+	return (native_endian & 1);
+}
+
+static chd_error flac_codec_init(void *codec, uint32_t hunkbytes)
+{
 	flac_codec_data *flac = (flac_codec_data*)codec;
 
 	/* make sure the CHD's hunk size is an even multiple of the sample size */
@@ -939,8 +945,7 @@ static chd_error flac_codec_init(void *codec, uint32_t hunkbytes)
 		return CHDERR_CODEC_ERROR;
 
 	/* determine whether we want native or swapped samples */
-	*(uint8_t *)(&native_endian) = 1;
-	flac->native_endian = (native_endian & 1);
+	flac->native_endian = flac_detect_native_endian();
 
 	/* flac decoder init */
 	if (flac_decoder_init(&flac->decoder))
@@ -990,7 +995,6 @@ static chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 #ifdef WANT_SUBCODE
 	chd_error ret;
 #endif
-	uint16_t native_endian = 0;
 	cdfl_codec_data *cdfl = (cdfl_codec_data*)codec;
 
 	/* make sure the CHD's hunk size is an even multiple of the frame size */
@@ -1002,8 +1006,7 @@ static chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 		return CHDERR_OUT_OF_MEMORY;
 
 	/* determine whether we want native or swapped samples */
-	*(uint8_t *)(&native_endian) = 1;
-	cdfl->swap_endian = (native_endian & 1);
+	cdfl->swap_endian = flac_detect_native_endian();
 
 #ifdef WANT_SUBCODE
 	/* init zlib inflater */

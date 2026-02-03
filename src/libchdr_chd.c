@@ -898,6 +898,7 @@ static chd_error cdzl_codec_decompress(void *codec, const uint8_t *src, uint32_t
 static chd_error huff_codec_init(void* codec, uint32_t hunkbytes)
 {
 	huff_codec_data* huff_codec = (huff_codec_data*) codec;
+	(void)hunkbytes;
 	huff_codec->decoder = create_huffman_decoder(256, 16);
 	return CHDERR_NONE;
 }
@@ -1109,6 +1110,7 @@ static chd_error zstd_codec_init(void* codec, uint32_t hunkbytes)
 {
 	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
 
+	(void)hunkbytes;
 	zstd_codec->dstream = ZSTD_createDStream();
 	if (!zstd_codec->dstream) {
 		printf("NO DSTREAM CREATED!\n");
@@ -2966,7 +2968,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 			blockoffs = (uint64_t)get_bigendian_uint32_t(rawmap) * (uint64_t)chd->header.hunkbytes;
 			if (blockoffs != 0) {
 				core_fseek(&chd->file, blockoffs, SEEK_SET);
-				int result = core_fread(&chd->file, dest, chd->header.hunkbytes);
+				if (core_fread(&chd->file, dest, chd->header.hunkbytes) != chd->header.hunkbytes)
+					return CHDERR_READ_ERROR;
 			/* TODO
 			else if (m_parent_missing)
 				throw CHDERR_REQUIRES_PARENT; */
@@ -3243,6 +3246,8 @@ static chd_error zlib_codec_init(void *codec, uint32_t hunkbytes)
 	int zerr;
 	chd_error err;
 	zlib_codec_data *data = (zlib_codec_data*)codec;
+
+	(void)hunkbytes;
 
 	/* clear the buffers */
 	memset(data, 0, sizeof(zlib_codec_data));

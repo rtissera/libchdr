@@ -61,7 +61,7 @@ int flac_decoder_init(flac_decoder *decoder)
 void flac_decoder_free(flac_decoder* decoder)
 {
 	if ((decoder != NULL) && (decoder->decoder != NULL)) {
-		drflac_close(decoder->decoder);
+		drflac_close((drflac*)decoder->decoder);
 		decoder->decoder = NULL;
 	}
 }
@@ -130,6 +130,10 @@ int flac_decoder_reset(flac_decoder* decoder, uint32_t sample_rate, uint8_t num_
 
 int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uint32_t num_samples, int swap_endian)
 {
+#define	BUFFER	2352	/* bytes per CD audio sector */
+	int16_t buffer[BUFFER];
+	uint32_t buf_samples = BUFFER / channels(decoder);
+
 	/* configure the uncompressed buffer */
 	memset(decoder->uncompressed_start, 0, sizeof(decoder->uncompressed_start));
 	decoder->uncompressed_start[0] = samples;
@@ -137,13 +141,10 @@ int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uin
 	decoder->uncompressed_length = num_samples;
 	decoder->uncompressed_swap = swap_endian;
 
-#define	BUFFER	2352	/* bytes per CD audio sector */
-	int16_t buffer[BUFFER];
-	uint32_t buf_samples = BUFFER / channels(decoder);
 	/* loop until we get everything we want */
 	while (decoder->uncompressed_offset < decoder->uncompressed_length) {
 		uint32_t frames = (num_samples < buf_samples ? num_samples : buf_samples);
-		if (!drflac_read_pcm_frames_s16(decoder->decoder, frames, buffer))
+		if (!drflac_read_pcm_frames_s16((drflac*)decoder->decoder, frames, buffer))
 			return 0;
 		flac_decoder_write_callback(decoder, buffer, frames*sizeof(*buffer)*channels(decoder));
 		num_samples -= frames;
@@ -159,7 +160,7 @@ int flac_decoder_decode_interleaved(flac_decoder* decoder, int16_t *samples, uin
 uint32_t flac_decoder_finish(flac_decoder* decoder)
 {
 	/* get the final decoding position and move forward */
-	drflac *flac = decoder->decoder;
+	drflac *flac = (drflac*)decoder->decoder;
 	uint64_t position = decoder->compressed_offset;
 
 	/* ugh... there's no function to obtain bytes used in drflac :-/ */
@@ -187,8 +188,8 @@ uint32_t flac_decoder_finish(flac_decoder* decoder)
 
 static size_t flac_decoder_read_callback(void *userdata, void *buffer, size_t bytes)
 {
-	flac_decoder* decoder = (flac_decoder*)userdata;
-	uint8_t *dst = buffer;
+	flac_decoder *decoder = (flac_decoder*)userdata;
+	uint8_t *dst = (uint8_t*)buffer;
 
 	/* copy from primary buffer first */
 	uint32_t outputpos = 0;
@@ -219,7 +220,7 @@ static size_t flac_decoder_read_callback(void *userdata, void *buffer, size_t by
 
 static void flac_decoder_metadata_callback(void *userdata, drflac_metadata *metadata)
 {
-	flac_decoder *decoder = userdata;
+	flac_decoder *decoder = (flac_decoder*)userdata;
 
 	/* ignore all but STREAMINFO metadata */
 	if (metadata->type != DRFLAC_METADATA_BLOCK_TYPE_STREAMINFO)

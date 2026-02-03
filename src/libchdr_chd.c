@@ -892,6 +892,8 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 {
 	huff_codec_data* huff_codec = (huff_codec_data*) codec;
 	struct bitstream* bitbuf = create_bitstream(src, complen);
+	uint32_t cur;
+	chd_error result;
 
 	// first import the tree
 	enum huffman_error err = huffman_import_tree_huffman(huff_codec->decoder, bitbuf);
@@ -902,11 +904,10 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 	}
 
 	// then decode the data
-	uint32_t cur;
 	for (cur = 0; cur < destlen; cur++)
 		dest[cur] = huffman_decode_one(huff_codec->decoder, bitbuf);
 	bitstream_flush(bitbuf);
-	chd_error result = bitstream_overflow(bitbuf) ? CHDERR_DECOMPRESSION_ERROR : CHDERR_NONE;
+	result = bitstream_overflow(bitbuf) ? CHDERR_DECOMPRESSION_ERROR : CHDERR_NONE;
 
 	free(bitbuf);
 	return result;
@@ -1117,18 +1118,28 @@ static void zstd_codec_free(void* codec)
  */
 static chd_error zstd_codec_decompress(void* codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
 {
+	ZSTD_inBuffer input;
+	ZSTD_outBuffer output;
+
 	/* initialize */
 	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
+
 	//reset decompressor
 	size_t zstd_res =  ZSTD_initDStream(zstd_codec->dstream);
+
 	if (ZSTD_isError(zstd_res)) 
 	{
 		printf("INITI DSTREAM FAILED!\n");
 		return CHDERR_DECOMPRESSION_ERROR;
 	}
 
-	ZSTD_inBuffer input =  {src, complen, 0};
-	ZSTD_outBuffer output = {dest, destlen, 0 };
+	input.src   = src;
+	input.size  = complen;
+	input.pos   = 0;
+
+	output.dst  = dest;
+	output.size = destlen;
+	output.pos  = 0;
 
 	while ((input.pos < input.size) && (output.pos < output.size))
 	{
@@ -2075,7 +2086,7 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd)
 {
 	if (chd->file_cache == NULL)
 	{
-		chd->file_cache = malloc(chd->file_size);
+		chd->file_cache = (uint8_t*)malloc(chd->file_size);
 		if (chd->file_cache == NULL)
 			return CHDERR_OUT_OF_MEMORY;
 		core_fseek(&chd->file, 0, SEEK_SET);
@@ -2257,7 +2268,7 @@ CHD_EXPORT core_file *chd_core_file(chd_file *chd)
 	if (chd->file.callbacks != &core_legacy)
 		return NULL;
 
-	return chd->file.argp;
+	return (core_file*)chd->file.argp;
 }
 
 /*-------------------------------------------------
@@ -2965,9 +2976,12 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				return hunk_read_into_memory(chd, blockoffs, dest);
 
 			case COMPRESSION_PARENT:
+			{
+				uint8_t units_in_hunk;
+
 				if (chd->parent == NULL)
 					return CHDERR_REQUIRES_PARENT;
-				uint8_t units_in_hunk = chd->header.hunkbytes / chd->header.unitbytes;
+				units_in_hunk = chd->header.hunkbytes / chd->header.unitbytes;
 
 				/* blockoffs is aligned to units_in_hunk */
 				if (blockoffs % units_in_hunk == 0) {
@@ -2975,7 +2989,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				/* blockoffs is not aligned to units_in_hunk */
 				} else {
 					uint32_t unit_in_hunk = blockoffs % units_in_hunk;
-					uint8_t *buf = malloc(chd->header.hunkbytes);
+					uint8_t *buf = (uint8_t*)malloc(chd->header.hunkbytes);
 					/* Read first half of hunk which contains blockoffs */
 					err = hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, buf);
 					if (err != CHDERR_NONE) {
@@ -2992,6 +3006,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 					memcpy(dest + (units_in_hunk - unit_in_hunk) * chd->header.unitbytes, buf, unit_in_hunk * chd->header.unitbytes);
 					free(buf);
 				}
+				break;
+			}
 		}
 		return CHDERR_NONE;
 	}

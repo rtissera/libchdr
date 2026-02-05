@@ -50,14 +50,10 @@
 #include "../include/libchdr/codec_cdzl.h"
 #include "../include/libchdr/codec_lzma.h"
 #include "../include/libchdr/codec_zlib.h"
+#include "../include/libchdr/codec_zstd.h"
 #include "../include/libchdr/flac.h"
 #include "../include/libchdr/huffman.h"
 #include "../include/libchdr/macros.h"
-#ifdef CHDR_SYSTEM_ZSTD
-#include <zstd.h>
-#else
-#include "../deps/zstd-1.5.7/zstd.h"
-#endif
 
 #include "../deps/lzma-25.01/include/LzmaDec.h"
 
@@ -196,12 +192,6 @@ struct _huff_codec_data
 	struct huffman_decoder* decoder;
 };
 
-typedef struct _zstd_codec_data zstd_codec_data;
-struct _zstd_codec_data
-{
-	ZSTD_DStream *dstream;
-};
-
 /* codec-private data for the FLAC codec */
 typedef struct _flac_codec_data flac_codec_data;
 struct _flac_codec_data {
@@ -308,12 +298,6 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 static chd_error flac_codec_init(void *codec, uint32_t hunkbytes);
 static void flac_codec_free(void *codec);
 static chd_error flac_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
-
-/* zstd compression codec */
-static chd_error zstd_codec_init(void *codec, uint32_t hunkbytes);
-static void zstd_codec_free(void *codec);
-static chd_error zstd_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
-
 
 /* cdfl compression codec */
 static chd_error cdfl_codec_init(void* codec, uint32_t hunkbytes);
@@ -534,97 +518,6 @@ static chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t
 	return CHDERR_NONE;
 }
 
-
-/***************************************************************************
- *  ZSTD DECOMPRESSOR
- ***************************************************************************
- */
-
-/*-------------------------------------------------
- *  zstd_codec_init - constructor
- *-------------------------------------------------
- */
-
-static chd_error zstd_codec_init(void* codec, uint32_t hunkbytes)
-{
-	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
-
-	(void)hunkbytes;
-	zstd_codec->dstream = ZSTD_createDStream();
-	if (!zstd_codec->dstream) {
-#if 0
-		printf("NO DSTREAM CREATED!\n");
-#endif
-		return CHDERR_DECOMPRESSION_ERROR;
-	}
-	return CHDERR_NONE;
-}
-
-/*-------------------------------------------------
- *  zstd_codec_free
- *-------------------------------------------------
- */
-
-static void zstd_codec_free(void* codec)
-{
-	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
-
-	ZSTD_freeDStream(zstd_codec->dstream);
-}
-
-/*-------------------------------------------------
- *  decompress - decompress data using the ZSTD 
- *  codec
- *-------------------------------------------------
- */
-static chd_error zstd_codec_decompress(void* codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
-{
-	ZSTD_inBuffer input;
-	ZSTD_outBuffer output;
-
-	/* initialize */
-	zstd_codec_data* zstd_codec = (zstd_codec_data*) codec;
-
-	/* reset decompressor */
-	size_t zstd_res =  ZSTD_initDStream(zstd_codec->dstream);
-
-	if (ZSTD_isError(zstd_res)) 
-	{
-#if 0
-		printf("INITI DSTREAM FAILED!\n");
-#endif
-		return CHDERR_DECOMPRESSION_ERROR;
-	}
-
-	input.src   = src;
-	input.size  = complen;
-	input.pos   = 0;
-
-	output.dst  = dest;
-	output.size = destlen;
-	output.pos  = 0;
-
-	while ((input.pos < input.size) && (output.pos < output.size))
-	{
-		zstd_res = ZSTD_decompressStream(zstd_codec->dstream, &output, &input);
-		if (ZSTD_isError(zstd_res))
-		{
-#if 0
-			printf("DECOMPRESSION ERROR IN LOOP\n");
-#endif
-			return CHDERR_DECOMPRESSION_ERROR;
-		}
-	}
-	if (output.pos != output.size)
-	{
-#if 0
-		printf("OUTPUT DOESN'T MATCH!\n");
-#endif
-		return CHDERR_DECOMPRESSION_ERROR;
-	}
-	return CHDERR_NONE;
-
-}
 
 /* cdzs */
 static chd_error cdzs_codec_init(void* codec, uint32_t hunkbytes)

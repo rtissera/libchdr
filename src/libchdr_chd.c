@@ -55,7 +55,7 @@
 #include "../deps/zstd-1.5.7/zstd.h"
 #endif
 
-#include "LzmaDec.h"
+#include "../deps/lzma-24.05/include/LzmaDec.h"
 #if defined(__PS3__) || defined(__PSL1GHT__)
 #define __MACTYPES__
 #endif

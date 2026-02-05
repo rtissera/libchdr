@@ -38,7 +38,6 @@ if(NOT TARGET lzma)
   add_subdirectory(deps/lzma-24.05 EXCLUDE_FROM_ALL)
 endif()
 list(APPEND CHDR_LIBS lzma)
-list(APPEND CHDR_INCLUDES lzma)
 
 # zlib
 if (WITH_SYSTEM_ZLIB)

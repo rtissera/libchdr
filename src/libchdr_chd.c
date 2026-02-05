@@ -55,7 +55,13 @@
 #if defined(__PS3__) || defined(__PSL1GHT__)
 #define __MACTYPES__
 #endif
+#ifdef CHDR_SYSTEM_ZLIB
 #include <zlib.h>
+typedef uInt zlib_alloc_size;
+#else
+#include "../deps/miniz-3.1.0/miniz.h"
+typedef size_t zlib_alloc_size;
+#endif
 
 #undef TRUE
 #undef FALSE
@@ -358,7 +364,7 @@ static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t m
 static chd_error zlib_codec_init(void *codec, uint32_t hunkbytes);
 static void zlib_codec_free(void *codec);
 static chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
-static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size);
+static voidpf zlib_fast_alloc(voidpf opaque, zlib_alloc_size items, zlib_alloc_size size);
 static void zlib_fast_free(voidpf opaque, voidpf address);
 static void zlib_allocator_free(voidpf opaque);
 
@@ -3201,7 +3207,7 @@ static chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t
 #define ZLIB_MIN_ALIGNMENT_BITS 512
 #define ZLIB_MIN_ALIGNMENT_BYTES (ZLIB_MIN_ALIGNMENT_BITS / 8)
 
-static voidpf zlib_fast_alloc(voidpf opaque, uInt items, uInt size)
+static voidpf zlib_fast_alloc(voidpf opaque, zlib_alloc_size items, zlib_alloc_size size)
 {
 	zlib_allocator *alloc = (zlib_allocator *)opaque;
 	uintptr_t paddr = 0;

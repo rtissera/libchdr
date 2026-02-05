@@ -10,11 +10,11 @@
 
 #include <string.h>
 
-#include <libchdr/flac.h>
-#include <libchdr/macros.h>
+#include "../include/libchdr/flac.h"
+#include "../include/libchdr/macros.h"
 #define DR_FLAC_IMPLEMENTATION
 #define DR_FLAC_NO_STDIO
-#include <dr_libs/dr_flac.h>
+#include "../include/dr_libs/dr_flac.h"
 
 /***************************************************************************
  *  FLAC DECODER

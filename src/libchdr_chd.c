@@ -44,11 +44,11 @@
 #include <limits.h>
 #include <time.h>
 
-#include <libchdr/chd.h>
-#include <libchdr/cdrom.h>
-#include <libchdr/flac.h>
-#include <libchdr/huffman.h>
-#include <libchdr/macros.h>
+#include "../include/libchdr/chd.h"
+#include "../include/libchdr/cdrom.h"
+#include "../include/libchdr/flac.h"
+#include "../include/libchdr/huffman.h"
+#include "../include/libchdr/macros.h"
 #ifdef CHDR_SYSTEM_ZSTD
 #include <zstd.h>
 #else

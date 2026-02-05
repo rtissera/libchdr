@@ -78,10 +78,8 @@ set(CHDR_SOURCES
   src/libchdr_huffman.c
 )
 
-list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
-
 add_library(chdr-static STATIC ${CHDR_SOURCES})
-target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
+target_include_directories(chdr-static INTERFACE include)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFINES})
 
@@ -97,7 +95,7 @@ endif()
 
 if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
-  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
+  target_include_directories(chdr INTERFACE include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFINES})
 

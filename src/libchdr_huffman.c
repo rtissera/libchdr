@@ -100,8 +100,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <libchdr/huffman.h>
-#include <libchdr/macros.h>
+#include "../include/libchdr/huffman.h"
+#include "../include/libchdr/macros.h"
 
 /***************************************************************************
  *  MACROS

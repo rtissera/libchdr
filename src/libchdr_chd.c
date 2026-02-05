@@ -51,6 +51,7 @@
 #include "../include/libchdr/codec_cdzl.h"
 #include "../include/libchdr/codec_cdzs.h"
 #include "../include/libchdr/codec_flac.h"
+#include "../include/libchdr/codec_huff.h"
 #include "../include/libchdr/codec_lzma.h"
 #include "../include/libchdr/codec_zlib.h"
 #include "../include/libchdr/codec_zstd.h"
@@ -188,12 +189,6 @@ struct _metadata_entry
 	uint8_t					flags;			/* flag bits */
 };
 
-typedef struct _huff_codec_data huff_codec_data;
-struct _huff_codec_data
-{
-	struct huffman_decoder* decoder;
-};
-
 /* internal representation of an open CHD file */
 struct _chd_file
 {
@@ -260,55 +255,6 @@ static chd_error map_read(chd_file *chd);
 
 /* metadata management */
 static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t metaindex, metadata_entry *metaentry);
-
-/* huff compression codec */
-static chd_error huff_codec_init(void *codec, uint32_t hunkbytes);
-static void huff_codec_free(void *codec);
-static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
-
-/***************************************************************************
- *  HUFFMAN DECOMPRESSOR
- ***************************************************************************
- */
-
-static chd_error huff_codec_init(void* codec, uint32_t hunkbytes)
-{
-	huff_codec_data* huff_codec = (huff_codec_data*) codec;
-	(void)hunkbytes;
-	huff_codec->decoder = create_huffman_decoder(256, 16);
-	return CHDERR_NONE;
-}
-
-static void huff_codec_free(void *codec)
-{
-	huff_codec_data* huff_codec = (huff_codec_data*) codec;
-	delete_huffman_decoder(huff_codec->decoder);
-}
-
-static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
-{
-	huff_codec_data* huff_codec = (huff_codec_data*) codec;
-	struct bitstream* bitbuf = create_bitstream(src, complen);
-	uint32_t cur;
-	chd_error result;
-
-	/* first import the tree */
-	enum huffman_error err = huffman_import_tree_huffman(huff_codec->decoder, bitbuf);
-	if (err != HUFFERR_NONE)
-	{
-		free(bitbuf);
-		return CHDERR_DECOMPRESSION_ERROR;
-	}
-
-	/* then decode the data */
-	for (cur = 0; cur < destlen; cur++)
-		dest[cur] = huffman_decode_one(huff_codec->decoder, bitbuf);
-	bitstream_flush(bitbuf);
-	result = bitstream_overflow(bitbuf) ? CHDERR_DECOMPRESSION_ERROR : CHDERR_NONE;
-
-	free(bitbuf);
-	return result;
-}
 
 
 /***************************************************************************

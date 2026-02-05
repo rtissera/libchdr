@@ -349,6 +349,8 @@ struct _chd_verify_result
 	uint8_t		metasha1[CHD_SHA1_BYTES];	/* SHA1 checksum of metadata */
 };
 
+typedef chd_error (*chd_codec_interface_decompress)(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
+
 
 
 /***************************************************************************

@@ -14,6 +14,7 @@
 #define __CDROM_H__
 
 #include <stdint.h>
+#include "chd.h"
 #include "chdconfig.h"
 #include "macros.h"
 
@@ -57,14 +58,6 @@ enum
 #define CD_FLAG_GDROMLE 0x00000002  /* legacy GD-ROM, with little-endian CDDA data */
 
 /***************************************************************************
-    DATA
-***************************************************************************/
-
-#ifdef WANT_RAW_DATA_SECTOR
-extern const uint8_t s_cd_sync_header[12];
-#endif
-
-/***************************************************************************
     FUNCTION PROTOTYPES
 ***************************************************************************/
 
@@ -75,6 +68,13 @@ void ecc_generate(uint8_t *sector);
 void ecc_clear(uint8_t *sector);
 #endif
 
+chd_error cd_codec_decompress(
+	uint8_t *buffer,
+	void *base_decompressor, chd_codec_interface_decompress base_decompress,
+#ifdef WANT_SUBCODE
+	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
+#endif
+	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
 
 
 /***************************************************************************

@@ -159,7 +159,7 @@ struct _codec_interface
 	uint8_t		lossy;										/* is this a lossy algorithm? */
 	chd_error	(*init)(void *codec, uint32_t hunkbytes);		/* codec initialize */
 	void		(*free)(void *codec);						/* codec free */
-	chd_error	(*decompress)(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen); /* decompress data */
+	chd_codec_interface_decompress	decompress; /* decompress data */
 	chd_error	(*config)(void *codec, int param, void *config); /* configure */
 };
 

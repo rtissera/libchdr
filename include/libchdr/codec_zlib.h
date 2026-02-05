@@ -17,7 +17,6 @@ typedef size_t zlib_alloc_size;
 #include "chd.h"
 
 /* codec-private data for the ZLIB codec */
-
 #define MAX_ZLIB_ALLOCS				64
 
 typedef struct _zlib_allocator zlib_allocator;

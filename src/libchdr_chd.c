@@ -49,7 +49,11 @@
 #include <libchdr/flac.h>
 #include <libchdr/huffman.h>
 #include <libchdr/macros.h>
+#ifdef CHDR_SYSTEM_ZSTD
 #include <zstd.h>
+#else
+#include "../deps/zstd-1.5.7/zstd.h"
+#endif
 
 #include "LzmaDec.h"
 #if defined(__PS3__) || defined(__PSL1GHT__)

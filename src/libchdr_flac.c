@@ -23,6 +23,7 @@
 
 static size_t flac_decoder_read_callback(void *userdata, void *buffer, size_t bytes);
 static drflac_bool32 flac_decoder_seek_callback(void *userdata, int offset, drflac_seek_origin origin);
+static drflac_bool32 flac_decoder_tell_callback(void *userdata, drflac_int64 *cursor);
 static void flac_decoder_metadata_callback(void *userdata, drflac_metadata *metadata);
 static void flac_decoder_write_callback(void *userdata, void *buffer, size_t bytes);
 
@@ -79,7 +80,8 @@ static int flac_decoder_internal_reset(flac_decoder* decoder)
 	flac_decoder_free(decoder);
 	decoder->decoder = drflac_open_with_metadata(
 		flac_decoder_read_callback, flac_decoder_seek_callback,
-		flac_decoder_metadata_callback, decoder, NULL);
+		flac_decoder_tell_callback, flac_decoder_metadata_callback,
+		decoder, NULL);
 	return (decoder->decoder != NULL);
 }
 
@@ -284,13 +286,13 @@ static drflac_bool32 flac_decoder_seek_callback(void *userdata, int offset, drfl
 	flac_decoder * decoder = (flac_decoder *)userdata;
 	uint32_t length = decoder->compressed_length + decoder->compressed2_length;
 
-	if (origin == drflac_seek_origin_start) {
+	if (origin == DRFLAC_SEEK_SET) {
 		uint32_t pos = offset;
 		if (pos <= length) {
 			decoder->compressed_offset = pos;
 			return DRFLAC_TRUE;
 		}
-	} else if (origin == drflac_seek_origin_current) {
+	} else if (origin == DRFLAC_SEEK_CUR) {
 		uint32_t pos = decoder->compressed_offset + offset;
 		if (pos <= length) {
 			decoder->compressed_offset = pos;
@@ -300,3 +302,16 @@ static drflac_bool32 flac_decoder_seek_callback(void *userdata, int offset, drfl
 	return DRFLAC_FALSE;
 }
 
+
+/*-------------------------------------------------
+ *  tell_callback - handle seeks on the output
+ *  stream
+ *-------------------------------------------------
+ */
+
+static drflac_bool32 flac_decoder_tell_callback(void *userdata, drflac_int64 *cursor)
+{
+	flac_decoder * decoder = (flac_decoder *)userdata;
+	*cursor = decoder->compressed_offset;
+	return 1;
+}

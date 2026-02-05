@@ -1,8 +1,6 @@
 add_library(lzma STATIC
   include/7zTypes.h
-  include/Compiler.h
   include/LzmaDec.h
-  include/Precomp.h
   src/LzmaDec.c
 )
 

@@ -11,7 +11,6 @@
 #endif
 
 #include <stddef.h>
-#include <stdint.h>
 
 #ifndef EXTERN_C_BEGIN
 #ifdef __cplusplus
@@ -173,16 +172,17 @@ typedef unsigned char Byte;
 typedef short Int16;
 typedef unsigned short UInt16;
 
-typedef int32_t Int32;
-typedef uint32_t UInt32;
+#ifdef Z7_DECL_Int32_AS_long
+typedef long Int32;
+typedef unsigned long UInt32;
+#else
+typedef int Int32;
+typedef unsigned int UInt32;
+#endif
 
 
 #ifndef _WIN32
 
-#undef INT
-#undef INT32
-#undef UINT
-#undef UINT32
 typedef int INT;
 typedef Int32 INT32;
 typedef unsigned int UINT;
@@ -529,7 +529,7 @@ struct ISzAlloc
 /*
 #define Z7_CONTAINER_FROM_VTBL_CLS(ptr, type, m) Z7_CONTAINER_FROM_VTBL(ptr, type, m)
 */
-#if defined (__clang__) || defined(__GNUC__) && __GNUC__ >= 5
+#if defined (__clang__) || defined(__GNUC__)
 #define Z7_DIAGNOSTIC_IGNORE_BEGIN_CAST_QUAL \
   _Pragma("GCC diagnostic push") \
   _Pragma("GCC diagnostic ignored \"-Wcast-qual\"")

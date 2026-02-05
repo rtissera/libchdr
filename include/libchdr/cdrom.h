@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include "chdconfig.h"
+#include "macros.h"
 
 /***************************************************************************
     CONSTANTS
@@ -72,12 +73,12 @@ void ecc_clear(uint8_t *sector);
     INLINE FUNCTIONS
 ***************************************************************************/
 
-static inline uint32_t msf_to_lba(uint32_t msf)
+static CHDR_INLINE uint32_t msf_to_lba(uint32_t msf)
 {
 	return ( ((msf&0x00ff0000)>>16) * 60 * 75) + (((msf&0x0000ff00)>>8) * 75) + ((msf&0x000000ff)>>0);
 }
 
-static inline uint32_t lba_to_msf(uint32_t lba)
+static CHDR_INLINE uint32_t lba_to_msf(uint32_t lba)
 {
 	uint8_t m, s, f;
 
@@ -96,7 +97,7 @@ static inline uint32_t lba_to_msf(uint32_t lba)
  * Angelo also says PCE tracks often start playing at the
  * wrong address.. related?
  **/
-static inline uint32_t lba_to_msf_alt(int lba)
+static CHDR_INLINE uint32_t lba_to_msf_alt(int lba)
 {
 	uint32_t ret = 0;
 

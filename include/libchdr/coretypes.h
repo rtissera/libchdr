@@ -8,6 +8,8 @@
 #include <streams/file_stream_transforms.h>
 #endif
 
+#include "macros.h"
+
 typedef struct chd_core_file_callbacks {
 	/*
 	 * return the size of a given file as a 64-bit unsigned integer.
@@ -53,19 +55,19 @@ typedef struct chd_core_file {
 
 /* File IO shortcuts */
 
-static inline int core_fclose(const core_file_callbacks_and_argp *fp) {
+static CHDR_INLINE int core_fclose(const core_file_callbacks_and_argp *fp) {
 	return fp->callbacks->fclose(fp->argp);
 }
 
-static inline size_t core_fread(const core_file_callbacks_and_argp *fp, void *ptr, size_t len) {
+static CHDR_INLINE size_t core_fread(const core_file_callbacks_and_argp *fp, void *ptr, size_t len) {
 	return fp->callbacks->fread(ptr, 1, len, fp->argp);
 }
 
-static inline int core_fseek(const core_file_callbacks_and_argp* fp, int64_t offset, int whence) {
+static CHDR_INLINE int core_fseek(const core_file_callbacks_and_argp* fp, int64_t offset, int whence) {
 	return fp->callbacks->fseek(fp->argp, offset, whence);
 }
 
-static inline uint64_t core_fsize(const core_file_callbacks_and_argp *fp)
+static CHDR_INLINE uint64_t core_fsize(const core_file_callbacks_and_argp *fp)
 {
 	return fp->callbacks->fsize(fp->argp);
 }

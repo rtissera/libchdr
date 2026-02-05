@@ -181,6 +181,18 @@ uint32_t flac_decoder_finish(flac_decoder* decoder)
 }
 
 /*-------------------------------------------------
+ *  detect_native_endian - detect system endianness
+ *-------------------------------------------------
+ */
+
+int flac_decoder_detect_native_endian(void)
+{
+	uint16_t native_endian = 0;
+	*(uint8_t *)(&native_endian) = 1;
+	return (native_endian & 1);
+}
+
+/*-------------------------------------------------
  *  read_callback - handle reads from the input
  *  stream
  *-------------------------------------------------

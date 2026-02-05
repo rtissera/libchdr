@@ -77,6 +77,7 @@ set(CHDR_SOURCES
   src/libchdr_codec_cdlz.c
   src/libchdr_codec_cdzl.c
   src/libchdr_codec_cdzs.c
+  src/libchdr_codec_flac.c
   src/libchdr_codec_lzma.c
   src/libchdr_codec_zlib.c
   src/libchdr_codec_zstd.c

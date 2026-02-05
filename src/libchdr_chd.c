@@ -49,10 +49,10 @@
 #include "../include/libchdr/codec_cdlz.h"
 #include "../include/libchdr/codec_cdzl.h"
 #include "../include/libchdr/codec_cdzs.h"
+#include "../include/libchdr/codec_flac.h"
 #include "../include/libchdr/codec_lzma.h"
 #include "../include/libchdr/codec_zlib.h"
 #include "../include/libchdr/codec_zstd.h"
-#include "../include/libchdr/flac.h"
 #include "../include/libchdr/huffman.h"
 #include "../include/libchdr/macros.h"
 
@@ -193,14 +193,6 @@ struct _huff_codec_data
 	struct huffman_decoder* decoder;
 };
 
-/* codec-private data for the FLAC codec */
-typedef struct _flac_codec_data flac_codec_data;
-struct _flac_codec_data {
-	/* internal state */
-	int		native_endian;
-	flac_decoder	decoder;
-};
-
 /* codec-private data for the CDFL codec */
 typedef struct _cdfl_codec_data cdfl_codec_data;
 struct _cdfl_codec_data {
@@ -285,11 +277,6 @@ static chd_error huff_codec_init(void *codec, uint32_t hunkbytes);
 static void huff_codec_free(void *codec);
 static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
 
-/* flac compression codec */
-static chd_error flac_codec_init(void *codec, uint32_t hunkbytes);
-static void flac_codec_free(void *codec);
-static chd_error flac_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
-
 /* cdfl compression codec */
 static chd_error cdfl_codec_init(void* codec, uint32_t hunkbytes);
 static void cdfl_codec_free(void* codec);
@@ -338,78 +325,6 @@ static chd_error huff_codec_decompress(void *codec, const uint8_t *src, uint32_t
 	free(bitbuf);
 	return result;
 }
- 
-/***************************************************************************
- *  CD FLAC DECOMPRESSOR
- ***************************************************************************
- */
-
-/*------------------------------------------------------
- *  flac_codec_blocksize - return the optimal block size
- *------------------------------------------------------
- */
-
-static uint32_t flac_codec_blocksize(uint32_t bytes)
-{
-	/* determine FLAC block size, which must be 16-65535
-	 * clamp to 2k since that's supposed to be the sweet spot */
-	uint32_t blocksize = bytes / 4;
-	while (blocksize > 2048)
-		blocksize /= 2;
-	return blocksize;
-}
-
-static int flac_detect_native_endian(void)
-{
-	uint16_t native_endian = 0;
-	*(uint8_t *)(&native_endian) = 1;
-	return (native_endian & 1);
-}
-
-static chd_error flac_codec_init(void *codec, uint32_t hunkbytes)
-{
-	flac_codec_data *flac = (flac_codec_data*)codec;
-
-	/* make sure the CHD's hunk size is an even multiple of the sample size */
-	if (hunkbytes % 4 != 0)
-		return CHDERR_CODEC_ERROR;
-
-	/* determine whether we want native or swapped samples */
-	flac->native_endian = flac_detect_native_endian();
-
-	/* flac decoder init */
-	if (flac_decoder_init(&flac->decoder))
-		return CHDERR_OUT_OF_MEMORY;
-
-	return CHDERR_NONE;
-}
-
-static void flac_codec_free(void *codec)
-{
-	flac_codec_data *flac = (flac_codec_data*)codec;
-	flac_decoder_free(&flac->decoder);
-}
-
-static chd_error flac_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
-{
-	flac_codec_data *flac = (flac_codec_data*)codec;
-	int swap_endian;
-
-	if (src[0] == 'L')
-		swap_endian = !flac->native_endian;
-	else if (src[0] == 'B')
-		swap_endian = flac->native_endian;
-	else
-		return CHDERR_DECOMPRESSION_ERROR;
-
-	if (!flac_decoder_reset(&flac->decoder, 44100, 2, flac_codec_blocksize(destlen), src + 1, complen - 1))
-		return CHDERR_DECOMPRESSION_ERROR;
-	if (!flac_decoder_decode_interleaved(&flac->decoder, (int16_t *)(dest), destlen/4, swap_endian))
-		return CHDERR_DECOMPRESSION_ERROR;
-	flac_decoder_finish(&flac->decoder);
-
-	return CHDERR_NONE;
-}
 
 static uint32_t cdfl_codec_blocksize(uint32_t bytes)
 {
@@ -436,7 +351,7 @@ static chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 		return CHDERR_OUT_OF_MEMORY;
 
 	/* determine whether we want native or swapped samples */
-	cdfl->swap_endian = flac_detect_native_endian();
+	cdfl->swap_endian = flac_decoder_detect_native_endian();
 
 #ifdef WANT_SUBCODE
 	/* init zlib inflater */

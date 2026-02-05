@@ -2522,6 +2522,14 @@ static uint32_t header_guess_unitbytes(chd_file *chd)
 
 static chd_error header_read(chd_file *chd, chd_header *header)
 {
+	static const uint32_t header_sizes[CHD_HEADER_VERSION] = {
+		CHD_V1_HEADER_SIZE,
+		CHD_V2_HEADER_SIZE,
+		CHD_V3_HEADER_SIZE,
+		CHD_V4_HEADER_SIZE,
+		CHD_V5_HEADER_SIZE,
+	};
+
 	uint8_t rawheader[CHD_MAX_HEADER_SIZE];
 
 	/* punt if NULL */
@@ -2532,8 +2540,8 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 	if (chd->file.callbacks == NULL)
 		return CHDERR_INVALID_FILE;
 
-	/* seek and read */
-	if (!seek_and_read(chd, 0, rawheader, sizeof(rawheader)))
+	/* read the start of the header */
+	if (!seek_and_read(chd, 0, rawheader, 8 + 4 + 4))
 		return CHDERR_READ_ERROR;
 
 	/* verify the tag */
@@ -2545,6 +2553,18 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 	header->length  = get_bigendian_uint32_t(&rawheader[8]);
 	header->version = get_bigendian_uint32_t(&rawheader[12]);
 
+	/* Unknown version */
+	if (header->version == 0 || header->version > ARRAY_LENGTH(header_sizes))
+		return CHDERR_UNSUPPORTED_VERSION;
+
+	/* make sure the length is expected */
+	if (header->length != header_sizes[header->version - 1])
+		return CHDERR_INVALID_DATA;
+
+	/* read the full header, now that we know its size */
+	if (!seek_and_read(chd, 0, rawheader, header->length))
+		return CHDERR_READ_ERROR;
+
 	switch (header->version)
 	{
 		default:
@@ -2553,11 +2573,6 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 
 		case 1:
 		case 2:
-			/* make sure the length is expected */
-			if ((header->version == 1 && header->length != CHD_V1_HEADER_SIZE) ||
-				(header->version == 2 && header->length != CHD_V2_HEADER_SIZE))
-				return CHDERR_INVALID_DATA;
-
 			header->flags              = get_bigendian_uint32_t(&rawheader[16]);
 			header->compression[0]     = get_bigendian_uint32_t(&rawheader[20]);
 			header->obsolete_hunksize  = get_bigendian_uint32_t(&rawheader[24]);
@@ -2581,9 +2596,6 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 			break;
 
 		case 3:
-			if (header->length != CHD_V3_HEADER_SIZE)
-				return CHDERR_INVALID_DATA;
-
 			header->flags          = get_bigendian_uint32_t(&rawheader[16]);
 			header->compression[0] = get_bigendian_uint32_t(&rawheader[20]);
 			header->totalhunks     = get_bigendian_uint32_t(&rawheader[24]);
@@ -2602,9 +2614,6 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 			break;
 
 		case 4:
-			if (header->length != CHD_V4_HEADER_SIZE)
-				return CHDERR_INVALID_DATA;
-
 			header->flags          = get_bigendian_uint32_t(&rawheader[16]);
 			header->compression[0] = get_bigendian_uint32_t(&rawheader[20]);
 			header->totalhunks     = get_bigendian_uint32_t(&rawheader[24]);
@@ -2622,9 +2631,6 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 			break;
 
 		case 5:
-			if (header->length != CHD_V5_HEADER_SIZE)
-				return CHDERR_INVALID_DATA;
-
 			header->compression[0] = get_bigendian_uint32_t(&rawheader[16]);
 			header->compression[1] = get_bigendian_uint32_t(&rawheader[20]);
 			header->compression[2] = get_bigendian_uint32_t(&rawheader[24]);

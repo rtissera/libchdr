@@ -90,6 +90,10 @@ void CLIB_DECL logerror(const char *text, ...) ATTR_PRINTF(1,2);
 /** @brief  43 bytes each. */
 #define ECC_Q_COMP 43
 
+#ifdef WANT_RAW_DATA_SECTOR
+const uint8_t s_cd_sync_header[12] = { 0x00,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x00 };
+#endif
+
 /**
  * @brief   -------------------------------------------------
  *            ECC lookup tables pre-calculated tables for ECC data calcs

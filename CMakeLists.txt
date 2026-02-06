@@ -34,10 +34,10 @@ include(GNUInstallDirs)
 
 
 # lzma
-if(NOT TARGET lzma)
+if(NOT TARGET chdr-lzma)
   add_subdirectory(deps/lzma-25.01 EXCLUDE_FROM_ALL)
 endif()
-list(APPEND CHDR_LIBS lzma)
+list(APPEND CHDR_LIBS chdr-lzma)
 
 # zlib
 if (WITH_SYSTEM_ZLIB)

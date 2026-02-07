@@ -416,6 +416,8 @@ void ecc_clear(uint8_t *sector)
 	memset(&sector[ECC_Q_OFFSET], 0, 2 * ECC_Q_NUM_BYTES);
 }
 
+#endif /* WANT_RAW_DATA_SECTOR */
+
 /* Handles decompression for CDZL, CDLZ, CDZS, and co. */
 
 chd_error cd_codec_decompress(
@@ -484,5 +486,3 @@ chd_error cd_codec_decompress(
 	}
 	return CHDERR_NONE;
 }
-
-#endif /* WANT_RAW_DATA_SECTOR */

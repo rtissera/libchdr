@@ -12,7 +12,7 @@ typedef struct _cdzs_codec_data cdzs_codec_data;
 struct _cdzs_codec_data
 {
 	zstd_codec_data base_decompressor;
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	zstd_codec_data subcode_decompressor;
 #endif
 	uint8_t*				buffer;

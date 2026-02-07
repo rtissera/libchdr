@@ -21,7 +21,7 @@ chd_error cdzs_codec_init(void* codec, uint32_t hunkbytes)
 	if (ret != CHDERR_NONE)
 		return ret;
 
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	ret = zstd_codec_init(&cdzs->subcode_decompressor, (hunkbytes / CD_FRAME_SIZE) * CD_MAX_SUBCODE_DATA);
 	if (ret != CHDERR_NONE)
 		return ret;
@@ -38,7 +38,7 @@ void cdzs_codec_free(void* codec)
 	cdzs_codec_data* cdzs = (cdzs_codec_data*) codec;
 	free(cdzs->buffer);
 	zstd_codec_free(&cdzs->base_decompressor);
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	zstd_codec_free(&cdzs->subcode_decompressor);
 #endif
 }
@@ -49,7 +49,7 @@ chd_error cdzs_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 
 	return cd_codec_decompress(cdzs->buffer,
 		&cdzs->base_decompressor, zstd_codec_decompress,
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 		&cdzs->subcode_decompressor, zstd_codec_decompress,
 #endif
 		src, complen, dest, destlen

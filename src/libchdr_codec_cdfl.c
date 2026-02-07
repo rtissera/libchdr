@@ -17,7 +17,7 @@ static uint32_t cdfl_codec_blocksize(uint32_t bytes)
 
 chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 {
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	chd_error ret;
 #endif
 	cdfl_codec_data *cdfl = (cdfl_codec_data*)codec;
@@ -33,7 +33,7 @@ chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 	/* determine whether we want native or swapped samples */
 	cdfl->swap_endian = flac_decoder_detect_native_endian();
 
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	/* init zlib inflater */
 	ret = zlib_codec_init(&cdfl->subcode_decompressor, (hunkbytes / CD_FRAME_SIZE) * CD_MAX_SECTOR_DATA);
 	if (ret != CHDERR_NONE)
@@ -51,7 +51,7 @@ void cdfl_codec_free(void *codec)
 {
 	cdfl_codec_data *cdfl = (cdfl_codec_data*)codec;
 	flac_decoder_free(&cdfl->decoder);
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	zlib_codec_free(&cdfl->subcode_decompressor);
 #endif
 	if (cdfl->buffer)
@@ -62,7 +62,7 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 {
 	uint32_t framenum;
 	uint8_t *buffer;
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	uint32_t offset;
 	chd_error ret;
 #endif
@@ -77,7 +77,7 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian))
 		return CHDERR_DECOMPRESSION_ERROR;
 
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	/* inflate the subcode data */
 	offset = flac_decoder_finish(&cdfl->decoder);
 	ret = zlib_codec_decompress(&cdfl->subcode_decompressor, src + offset, complen - offset, &cdfl->buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
@@ -91,7 +91,7 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	for (framenum = 0; framenum < frames; framenum++)
 	{
 		memcpy(&dest[framenum * CD_FRAME_SIZE], &cdfl->buffer[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &cdfl->buffer[frames * CD_MAX_SECTOR_DATA + framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
 #endif
 	}

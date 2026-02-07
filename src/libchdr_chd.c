@@ -1831,7 +1831,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 		/* get a pointer to the map entry */
 		uint64_t blockoffs;
 		uint32_t blocklen;
-#ifdef VERIFY_BLOCK_CRC
+#if VERIFY_BLOCK_CRC
 		uint16_t blockcrc;
 #endif
 		uint8_t *rawmap = &chd->header.rawmap[chd->header.mapentrybytes * hunknum];
@@ -1861,7 +1861,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 		/* compressed case */
 		blocklen = get_bigendian_uint24(&rawmap[1]);
 		blockoffs = get_bigendian_uint48(&rawmap[4]);
-#ifdef VERIFY_BLOCK_CRC
+#if VERIFY_BLOCK_CRC
 		blockcrc = get_bigendian_uint16(&rawmap[10]);
 #endif
 		codec = NULL;
@@ -1917,7 +1917,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				err = chd->codecintf[rawmap[0]]->decompress(codec, compressed_bytes, blocklen, dest, chd->header.hunkbytes);
 				if (err != CHDERR_NONE)
 					return err;
-#ifdef VERIFY_BLOCK_CRC
+#if VERIFY_BLOCK_CRC
 				if (crc16(dest, chd->header.hunkbytes) != blockcrc)
 					return CHDERR_DECOMPRESSION_ERROR;
 #endif
@@ -1927,7 +1927,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				err = hunk_read_uncompressed(chd, blockoffs, blocklen, dest);
 				if (err != CHDERR_NONE)
 					return err;
-#ifdef VERIFY_BLOCK_CRC
+#if VERIFY_BLOCK_CRC
 				if (crc16(dest, chd->header.hunkbytes) != blockcrc)
 					return CHDERR_DECOMPRESSION_ERROR;
 #endif

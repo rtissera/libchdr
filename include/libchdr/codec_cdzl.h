@@ -12,7 +12,7 @@ typedef struct _cdzl_codec_data cdzl_codec_data;
 struct _cdzl_codec_data {
 	/* internal state */
 	zlib_codec_data		base_decompressor;
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	zlib_codec_data		subcode_decompressor;
 #endif
 	uint8_t*			buffer;

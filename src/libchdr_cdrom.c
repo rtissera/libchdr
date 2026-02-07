@@ -20,7 +20,7 @@
 
 #include "../include/libchdr/cdrom.h"
 
-#ifdef WANT_RAW_DATA_SECTOR
+#if WANT_RAW_DATA_SECTOR
 
 /***************************************************************************
     DEBUGGING
@@ -90,7 +90,7 @@ void CLIB_DECL logerror(const char *text, ...) ATTR_PRINTF(1,2);
 /** @brief  43 bytes each. */
 #define ECC_Q_COMP 43
 
-#ifdef WANT_RAW_DATA_SECTOR
+#if WANT_RAW_DATA_SECTOR
 static const uint8_t s_cd_sync_header[12] = { 0x00,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x00 };
 #endif
 
@@ -423,7 +423,7 @@ void ecc_clear(uint8_t *sector)
 chd_error cd_codec_decompress(
 	uint8_t *buffer,
 	void *base_decompressor, chd_codec_interface_decompress base_decompress,
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
 #endif
 	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -458,7 +458,7 @@ chd_error cd_codec_decompress(
 	decomp_err = base_decompress(base_decompressor, &src[header_bytes], complen_base, &buffer[0], frames * CD_MAX_SECTOR_DATA);
 	if (decomp_err != CHDERR_NONE)
 		return decomp_err;
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	decomp_err = subcode_decompress(subcode_decompressor, &src[header_bytes + complen_base], complen - complen_base - header_bytes, &buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
 	if (decomp_err != CHDERR_NONE)
 		return decomp_err;
@@ -467,14 +467,16 @@ chd_error cd_codec_decompress(
 	/* reassemble the data */
 	for (framenum = 0; framenum < frames; framenum++)
 	{
+#if WANT_RAW_DATA_SECTOR
 		uint8_t *sector;
+#endif
 
 		memcpy(&dest[framenum * CD_FRAME_SIZE], &buffer[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &buffer[frames * CD_MAX_SECTOR_DATA + framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
 #endif
 
-#ifdef WANT_RAW_DATA_SECTOR
+#if WANT_RAW_DATA_SECTOR
 		/* reconstitute the ECC data and sync header */
 		sector = (uint8_t *)&dest[framenum * CD_FRAME_SIZE];
 		if ((src[framenum / 8] & (1 << (framenum % 8))) != 0)

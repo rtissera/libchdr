@@ -61,7 +61,7 @@ enum
     FUNCTION PROTOTYPES
 ***************************************************************************/
 
-#ifdef WANT_RAW_DATA_SECTOR
+#if WANT_RAW_DATA_SECTOR
 /* ECC utilities */
 int ecc_verify(const uint8_t *sector);
 void ecc_generate(uint8_t *sector);
@@ -71,7 +71,7 @@ void ecc_clear(uint8_t *sector);
 chd_error cd_codec_decompress(
 	uint8_t *buffer,
 	void *base_decompressor, chd_codec_interface_decompress base_decompress,
-#ifdef WANT_SUBCODE
+#if WANT_SUBCODE
 	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
 #endif
 	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);

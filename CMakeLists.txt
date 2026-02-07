@@ -8,6 +8,9 @@ endif()
 option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 option(WITH_SYSTEM_ZSTD "Use system provided zstd library" OFF)
+option(CHDR_WANT_RAW_DATA_SECTOR "Output ECC data and sync header" ON)
+option(CHDR_WANT_SUBCODE "Output CD subchannel data" ON)
+option(CHDR_VERIFY_BLOCK_CRC "Verify integrity of decoded data" ON)
 
 option(BUILD_LTO "Compile libchdr with link-time optimization if supported" OFF)
 if(BUILD_LTO)
@@ -31,7 +34,6 @@ include(GNUInstallDirs)
 #--------------------------------------------------
 # dependencies
 #--------------------------------------------------
-
 
 # lzma
 if(NOT TARGET chdr-lzma)
@@ -66,6 +68,29 @@ else()
   endif()
   list(APPEND CHDR_LIBS zstd)
 endif()
+
+#--------------------------------------------------
+# options
+#--------------------------------------------------
+
+if(CHDR_WANT_RAW_DATA_SECTOR)
+  list(APPEND CHDR_DEFINES WANT_RAW_DATA_SECTOR=1)
+else()
+  list(APPEND CHDR_DEFINES WANT_RAW_DATA_SECTOR=0)
+endif()
+
+if(CHDR_WANT_SUBCODE)
+  list(APPEND CHDR_DEFINES WANT_SUBCODE=1)
+else()
+  list(APPEND CHDR_DEFINES WANT_SUBCODE=0)
+endif()
+
+if(CHDR_VERIFY_BLOCK_CRC)
+  list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=1)
+else()
+  list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)
+endif()
+
 #--------------------------------------------------
 # chdr
 #--------------------------------------------------

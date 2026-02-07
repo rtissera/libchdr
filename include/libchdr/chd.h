@@ -43,7 +43,6 @@
 #define __CHD_H__
 
 #include "coretypes.h"
-#include "chdconfig.h"
 
 #ifdef __cplusplus
 extern "C" {

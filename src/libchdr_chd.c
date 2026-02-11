@@ -201,15 +201,18 @@ struct _chd_file
 	uint8_t *					compressed;		/* pointer to buffer for compressed data */
 	const codec_interface *	codecintf[4];	/* interface to the codec */
 
-	zlib_codec_data			zlib_codec_data;		/* zlib codec data */
-	lzma_codec_data			lzma_codec_data;		/* lzma codec data */
-	huff_codec_data			huff_codec_data;		/* huff codec data */
-	flac_codec_data			flac_codec_data;		/* flac codec data */
-	zstd_codec_data			zstd_codec_data;		/* zstd codec data */
-	cdzl_codec_data			cdzl_codec_data;		/* cdzl codec data */
-	cdlz_codec_data			cdlz_codec_data;		/* cdlz codec data */
-	cdfl_codec_data			cdfl_codec_data;		/* cdfl codec data */
-	cdzs_codec_data			cdzs_codec_data;		/* cdzs codec data */
+	struct
+	{
+		zlib_codec_data			zlib;		/* zlib codec data */
+		lzma_codec_data			lzma;		/* lzma codec data */
+		huff_codec_data			huff;		/* huff codec data */
+		flac_codec_data			flac;		/* flac codec data */
+		zstd_codec_data			zstd;		/* zstd codec data */
+		cdzl_codec_data			cdzl;		/* cdzl codec data */
+		cdlz_codec_data			cdlz;		/* cdlz codec data */
+		cdfl_codec_data			cdfl;		/* cdfl codec data */
+		cdzs_codec_data			cdzs;		/* cdzs codec data */
+	} codec_data;
 
 	uint8_t *					file_cache;		/* cache of underlying file */
 };
@@ -979,7 +982,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 		/* initialize the codec */
 		if (newchd->codecintf[0]->init != NULL)
 		{
-			err = newchd->codecintf[0]->init(&newchd->zlib_codec_data, newchd->header.hunkbytes);
+			err = newchd->codecintf[0]->init(&newchd->codec_data.zlib, newchd->header.hunkbytes);
 			if (err != CHDERR_NONE)
 				EARLY_EXIT(err);
 		}
@@ -1025,39 +1028,39 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 				switch (newchd->header.compression[decompnum])
 				{
 					case CHD_CODEC_ZLIB:
-						codec = &newchd->zlib_codec_data;
+						codec = &newchd->codec_data.zlib;
 						break;
 
 					case CHD_CODEC_LZMA:
-						codec = &newchd->lzma_codec_data;
+						codec = &newchd->codec_data.lzma;
 						break;
 
 					case CHD_CODEC_HUFFMAN:
-						codec = &newchd->huff_codec_data;
+						codec = &newchd->codec_data.huff;
 						break;
 
 					case CHD_CODEC_FLAC:
-						codec = &newchd->flac_codec_data;
+						codec = &newchd->codec_data.flac;
 						break;
 
 					case CHD_CODEC_ZSTD:
-						codec = &newchd->zstd_codec_data;
+						codec = &newchd->codec_data.zstd;
 						break;
 
 					case CHD_CODEC_CD_ZLIB:
-						codec = &newchd->cdzl_codec_data;
+						codec = &newchd->codec_data.cdzl;
 						break;
 
 					case CHD_CODEC_CD_LZMA:
-						codec = &newchd->cdlz_codec_data;
+						codec = &newchd->codec_data.cdlz;
 						break;
 
 					case CHD_CODEC_CD_FLAC:
-						codec = &newchd->cdfl_codec_data;
+						codec = &newchd->codec_data.cdfl;
 						break;
 
 					case CHD_CODEC_CD_ZSTD:
-						codec = &newchd->cdzs_codec_data;
+						codec = &newchd->codec_data.cdzs;
 						break;
 				}
 
@@ -1155,7 +1158,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->header.version < 5)
 	{
 		if (chd->codecintf[0] != NULL && chd->codecintf[0]->free != NULL)
-			chd->codecintf[0]->free(&chd->zlib_codec_data);
+			chd->codecintf[0]->free(&chd->codec_data.zlib);
 	}
 	else
 	{
@@ -1186,39 +1189,39 @@ CHD_EXPORT void chd_close(chd_file *chd)
 			switch (chd->codecintf[i]->compression)
 			{
 				case CHD_CODEC_ZLIB:
-					codec = &chd->zlib_codec_data;
+					codec = &chd->codec_data.zlib;
 					break;
 
 				case CHD_CODEC_LZMA:
-					codec = &chd->lzma_codec_data;
+					codec = &chd->codec_data.lzma;
 					break;
 
 				case CHD_CODEC_HUFFMAN:
-					codec = &chd->huff_codec_data;
+					codec = &chd->codec_data.huff;
 					break;
 
 				case CHD_CODEC_FLAC:
-					codec = &chd->flac_codec_data;
+					codec = &chd->codec_data.flac;
 					break;
 
 				case CHD_CODEC_ZSTD:
-					codec = &chd->zstd_codec_data;
+					codec = &chd->codec_data.zstd;
 					break;
 
 				case CHD_CODEC_CD_ZLIB:
-					codec = &chd->cdzl_codec_data;
+					codec = &chd->codec_data.cdzl;
 					break;
 
 				case CHD_CODEC_CD_LZMA:
-					codec = &chd->cdlz_codec_data;
+					codec = &chd->codec_data.cdlz;
 					break;
 
 				case CHD_CODEC_CD_FLAC:
-					codec = &chd->cdfl_codec_data;
+					codec = &chd->codec_data.cdfl;
 					break;
 
 				case CHD_CODEC_CD_ZSTD:
-					codec = &chd->cdzs_codec_data;
+					codec = &chd->codec_data.cdzs;
 					break;
 			}
 
@@ -1792,7 +1795,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 				/* now decompress using the codec */
 				err = CHDERR_NONE;
-				codec = &chd->zlib_codec_data;
+				codec = &chd->codec_data.zlib;
 				if (chd->codecintf[0]->decompress != NULL)
 					err = chd->codecintf[0]->decompress(codec, compressed_bytes, entry->length, dest, chd->header.hunkbytes);
 				if (err != CHDERR_NONE)
@@ -1879,39 +1882,39 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				switch (chd->codecintf[rawmap[0]]->compression)
 				{
 					case CHD_CODEC_ZLIB:
-						codec = &chd->zlib_codec_data;
+						codec = &chd->codec_data.zlib;
 						break;
 
 					case CHD_CODEC_LZMA:
-						codec = &chd->lzma_codec_data;
+						codec = &chd->codec_data.lzma;
 						break;
 
 					case CHD_CODEC_HUFFMAN:
-						codec = &chd->huff_codec_data;
+						codec = &chd->codec_data.huff;
 						break;
 
 					case CHD_CODEC_FLAC:
-						codec = &chd->flac_codec_data;
+						codec = &chd->codec_data.flac;
 						break;
 
 					case CHD_CODEC_ZSTD:
-						codec = &chd->zstd_codec_data;
+						codec = &chd->codec_data.zstd;
 						break;
 
 					case CHD_CODEC_CD_ZLIB:
-						codec = &chd->cdzl_codec_data;
+						codec = &chd->codec_data.cdzl;
 						break;
 
 					case CHD_CODEC_CD_LZMA:
-						codec = &chd->cdlz_codec_data;
+						codec = &chd->codec_data.cdlz;
 						break;
 
 					case CHD_CODEC_CD_FLAC:
-						codec = &chd->cdfl_codec_data;
+						codec = &chd->codec_data.cdfl;
 						break;
 
 					case CHD_CODEC_CD_ZSTD:
-						codec = &chd->cdzs_codec_data;
+						codec = &chd->codec_data.cdzs;
 						break;
 				}
 				if (codec==NULL)

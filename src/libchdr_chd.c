@@ -1780,8 +1780,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 		{
 			/* compressed data */
 			case V34_MAP_ENTRY_TYPE_COMPRESSED:
-            {
-               void *codec = NULL;
+			{
+				void *codec = NULL;
 
 				/* read it into the decompression buffer */
 				compressed_bytes = hunk_read_compressed(chd, entry->offset, entry->length);

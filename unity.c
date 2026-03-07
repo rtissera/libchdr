@@ -5,7 +5,7 @@
 #define MINIZ_NO_TIME
 
 #include "deps/lzma-25.01/src/LzmaDec.c"
-#include "deps/miniz-3.1.0/miniz.c"
+#include "deps/miniz-3.1.1/miniz.c"
 #include "deps/zstd-1.5.7/zstddeclib.c"
 
 #include "src/libchdr_bitstream.c"

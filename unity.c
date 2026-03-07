@@ -12,7 +12,7 @@
 #define MINIZ_NO_STDIO
 #endif
 
-#ifnfef MINIZ_TIME
+#ifndef MINIZ_TIME
 #define MINIZ_NO_TIME
 #endif
 

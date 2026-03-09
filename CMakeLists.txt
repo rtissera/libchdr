@@ -8,6 +8,9 @@ endif()
 option(INSTALL_STATIC_LIBS "Install static libraries" OFF)
 option(WITH_SYSTEM_ZLIB "Use system provided zlib library" OFF)
 option(WITH_SYSTEM_ZSTD "Use system provided zstd library" OFF)
+option(CHDR_WANT_RAW_DATA_SECTOR "Output ECC data and sync header" ON)
+option(CHDR_WANT_SUBCODE "Output CD subchannel data" ON)
+option(CHDR_VERIFY_BLOCK_CRC "Verify integrity of decoded data" ON)
 
 option(BUILD_LTO "Compile libchdr with link-time optimization if supported" OFF)
 if(BUILD_LTO)
@@ -32,25 +35,22 @@ include(GNUInstallDirs)
 # dependencies
 #--------------------------------------------------
 
-
 # lzma
-if(NOT TARGET lzma)
-  add_subdirectory(deps/lzma-24.05 EXCLUDE_FROM_ALL)
+if(NOT TARGET chdr-lzma)
+  add_subdirectory(deps/lzma-25.01 EXCLUDE_FROM_ALL)
 endif()
-list(APPEND CHDR_LIBS lzma)
-list(APPEND CHDR_INCLUDES lzma)
+list(APPEND CHDR_LIBS chdr-lzma)
 
 # zlib
 if (WITH_SYSTEM_ZLIB)
   find_package(ZLIB REQUIRED)
   list(APPEND PLATFORM_LIBS ZLIB::ZLIB)
+  list(APPEND CHDR_DEFINES CHDR_SYSTEM_ZLIB)
 else()
-  if(NOT TARGET zlibstatic)
-    option(ZLIB_BUILD_EXAMPLES "Enable Zlib Examples" OFF)
-    add_subdirectory(deps/zlib-1.3.1 EXCLUDE_FROM_ALL)
-    set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if(NOT TARGET miniz)
+    add_subdirectory(deps/miniz-3.1.1 EXCLUDE_FROM_ALL)
   endif()
-  list(APPEND CHDR_LIBS zlibstatic)
+  list(APPEND CHDR_LIBS miniz)
 endif()
 
 # zstd
@@ -61,15 +61,36 @@ if (WITH_SYSTEM_ZSTD)
   else()
     list(APPEND PLATFORM_LIBS zstd::libzstd_static)
   endif()
+  list(APPEND CHDR_DEFINES CHDR_SYSTEM_ZSTD)
 else()
-  if(NOT TARGET libzstd_static)
-    option(ZSTD_BUILD_SHARED "BUILD SHARED LIBRARIES" OFF)
-    option(ZSTD_BUILD_PROGRAMS "BUILD PROGRAMS" OFF)
-    option(ZSTD_LEGACY_SUPPORT "LEGACY SUPPORT" OFF)
-    add_subdirectory(deps/zstd-1.5.6/build/cmake EXCLUDE_FROM_ALL)
+  if(NOT TARGET zstd)
+    add_subdirectory(deps/zstd-1.5.7 EXCLUDE_FROM_ALL)
   endif()
-  list(APPEND CHDR_LIBS libzstd_static)
+  list(APPEND CHDR_LIBS zstd)
 endif()
+
+#--------------------------------------------------
+# options
+#--------------------------------------------------
+
+if(CHDR_WANT_RAW_DATA_SECTOR)
+  list(APPEND CHDR_DEFINES WANT_RAW_DATA_SECTOR=1)
+else()
+  list(APPEND CHDR_DEFINES WANT_RAW_DATA_SECTOR=0)
+endif()
+
+if(CHDR_WANT_SUBCODE)
+  list(APPEND CHDR_DEFINES WANT_SUBCODE=1)
+else()
+  list(APPEND CHDR_DEFINES WANT_SUBCODE=0)
+endif()
+
+if(CHDR_VERIFY_BLOCK_CRC)
+  list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=1)
+else()
+  list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)
+endif()
+
 #--------------------------------------------------
 # chdr
 #--------------------------------------------------
@@ -78,15 +99,23 @@ set(CHDR_SOURCES
   src/libchdr_bitstream.c
   src/libchdr_cdrom.c
   src/libchdr_chd.c
+  src/libchdr_codec_cdfl.c
+  src/libchdr_codec_cdlz.c
+  src/libchdr_codec_cdzl.c
+  src/libchdr_codec_cdzs.c
+  src/libchdr_codec_flac.c
+  src/libchdr_codec_huff.c
+  src/libchdr_codec_lzma.c
+  src/libchdr_codec_zlib.c
+  src/libchdr_codec_zstd.c
   src/libchdr_flac.c
   src/libchdr_huffman.c
 )
 
-list(APPEND CHDR_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/include)
-
 add_library(chdr-static STATIC ${CHDR_SOURCES})
-target_include_directories(chdr-static PRIVATE ${CHDR_INCLUDES} PUBLIC include)
+target_include_directories(chdr-static INTERFACE include)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFINES})
 
 if(MSVC)
   target_compile_definitions(chdr-static PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -100,8 +129,9 @@ endif()
 
 if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
-  target_include_directories(chdr PRIVATE ${CHDR_INCLUDES} PUBLIC include)
+  target_include_directories(chdr INTERFACE include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+  target_compile_definitions(chdr PRIVATE ${CHDR_DEFINES})
 
   if(MSVC)
     target_compile_definitions(chdr PUBLIC "CHD_DLL")

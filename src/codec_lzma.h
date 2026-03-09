@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-#include "../../deps/lzma-25.01/include/LzmaDec.h"
+#include "../deps/lzma-25.01/include/LzmaDec.h"
 
-#include "chd.h"
+#include "../include/libchdr/chd.h"
 
 /* codec-private data for the LZMA codec */
 #define MAX_LZMA_ALLOCS 64
@@ -13,9 +13,7 @@
 typedef struct _lzma_allocator lzma_allocator;
 struct _lzma_allocator
 {
-	void *(*Alloc)(void *p, size_t size);
- 	void (*Free)(void *p, void *address); /* address can be 0 */
-	void (*FreeSz)(void *p, void *address, size_t size); /* address can be 0 */
+	ISzAlloc	base;	/* must be first member for (ISzAlloc*) cast compatibility */
 	uint32_t*	allocptr[MAX_LZMA_ALLOCS];
 	uint32_t*	allocptr2[MAX_LZMA_ALLOCS];
 };

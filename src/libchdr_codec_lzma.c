@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_lzma.h"
+#include "codec_lzma.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -9,8 +9,8 @@
  ***************************************************************************
  */
 
-static void *lzma_fast_alloc(void *p, size_t size);
-static void lzma_fast_free(void *p, void *address);
+static void *lzma_fast_alloc(ISzAllocPtr p, size_t size);
+static void lzma_fast_free(ISzAllocPtr p, void *address);
 
 /*-------------------------------------------------
  *  lzma_allocator_init
@@ -24,8 +24,8 @@ static void lzma_allocator_init(void* p)
 	/* reset pointer list */
 	memset(codec->allocptr, 0, sizeof(codec->allocptr));
 	memset(codec->allocptr2, 0, sizeof(codec->allocptr2));
-	codec->Alloc = lzma_fast_alloc;
-	codec->Free = lzma_fast_free;
+	codec->base.Alloc = lzma_fast_alloc;
+	codec->base.Free = lzma_fast_free;
 }
 
 /*-------------------------------------------------
@@ -56,7 +56,7 @@ static void lzma_allocator_free(void* p )
 #define LZMA_MIN_ALIGNMENT_BITS 512
 #define LZMA_MIN_ALIGNMENT_BYTES (LZMA_MIN_ALIGNMENT_BITS / 8)
 
-static void *lzma_fast_alloc(void *p, size_t size)
+static void *lzma_fast_alloc(ISzAllocPtr p, size_t size)
 {
 	int scan;
 	uint32_t *addr        = NULL;
@@ -112,7 +112,7 @@ static void *lzma_fast_alloc(void *p, size_t size)
  *-------------------------------------------------
  */
 
-static void lzma_fast_free(void *p, void *address)
+static void lzma_fast_free(ISzAllocPtr p, void *address)
 {
 	int scan;
 	uint32_t *ptr = NULL;
@@ -220,7 +220,7 @@ chd_error lzma_codec_init(void* codec, uint32_t hunkbytes)
 	LzmaDec_Construct(&lzma_codec->decoder);
 
 	/* do memory allocations */
-	if (LzmaDec_Allocate(&lzma_codec->decoder, decoder_props, LZMA_PROPS_SIZE, (ISzAlloc*)alloc) != SZ_OK)
+	if (LzmaDec_Allocate(&lzma_codec->decoder, decoder_props, LZMA_PROPS_SIZE, &alloc->base) != SZ_OK)
 		return CHDERR_DECOMPRESSION_ERROR;
 
 	/* Okay */
@@ -237,7 +237,7 @@ void lzma_codec_free(void* codec)
 	lzma_codec_data* lzma_codec = (lzma_codec_data*) codec;
 
 	/* free memory */
-	LzmaDec_Free(&lzma_codec->decoder, (ISzAlloc*)&lzma_codec->allocator);
+	LzmaDec_Free(&lzma_codec->decoder, &lzma_codec->allocator.base);
 	lzma_allocator_free(&lzma_codec->allocator);
 }
 

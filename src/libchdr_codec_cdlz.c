@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_cdlz.h"
+#include "codec_cdlz.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -51,6 +51,8 @@ chd_error cdlz_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		&cdlz->base_decompressor, lzma_codec_decompress,
 #if WANT_SUBCODE
 		&cdlz->subcode_decompressor, zlib_codec_decompress,
+#else
+		NULL, NULL,
 #endif
 		src, complen, dest, destlen
 	);

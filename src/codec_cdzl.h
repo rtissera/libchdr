@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#include "chd.h"
-#include "chdconfig.h"
+#include "../include/libchdr/chd.h"
+#include "../include/libchdr/chdconfig.h"
 #include "codec_zlib.h"
 
 /* codec-private data for the CDZL codec */

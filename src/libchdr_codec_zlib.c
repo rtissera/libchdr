@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_zlib.h"
+#include "codec_zlib.h"
 
 #include <stddef.h>
 #include <stdlib.h>

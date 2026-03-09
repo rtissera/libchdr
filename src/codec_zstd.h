@@ -6,10 +6,10 @@
 #ifdef CHDR_SYSTEM_ZSTD
 #include <zstd.h>
 #else
-#include "../../deps/zstd-1.5.7/zstd.h"
+#include "../deps/zstd-1.5.7/zstd.h"
 #endif
 
-#include "chd.h"
+#include "../include/libchdr/chd.h"
 
 /* codec-private data for the ZSTD codec */
 

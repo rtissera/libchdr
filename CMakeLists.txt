@@ -152,7 +152,7 @@ if (BUILD_SHARED_LIBS)
 
   set_target_properties(chdr PROPERTIES C_VISIBILITY_PRESET hidden)
   set_target_properties(chdr PROPERTIES VISIBILITY_INLINES_HIDDEN 1)
-  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h")
+  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h;include/libchdr/macros.h")
   set_target_properties(chdr PROPERTIES VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}" SOVERSION ${PROJECT_VERSION_MAJOR})
 
   if (CMAKE_BUILD_TYPE MATCHES Release)

@@ -244,7 +244,7 @@ static int core_legacy_fclose(void *file);
 static int core_legacy_fseek(void* file, int64_t offset, int whence);
 
 /* internal header operations */
-static chd_error header_read(chd_file *chd, chd_header *header);
+static chd_error header_read(chd_file *chd);
 
 /* internal hunk read/write */
 static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest);
@@ -905,7 +905,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 		EARLY_EXIT(err = CHDERR_INVALID_FILE);
 
 	/* now attempt to read the header */
-	err = header_read(newchd, &newchd->header);
+	err = header_read(newchd);
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
 
@@ -1337,6 +1337,7 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd)
 
 CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, chd_header *header)
 {
+	chd_error err;
 	chd_file chd;
 
 	/* verify parameters */
@@ -1347,7 +1348,11 @@ CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbac
 	chd.file.argp = (void*)user_data;
 
 	/* attempt to read the header */
-	return header_read(&chd, header);
+	err = header_read(&chd);
+	if (err != CHDERR_NONE)
+		return err;
+	*header = chd.header;
+	return CHDERR_NONE;
 }
 
 /*-------------------------------------------------
@@ -1513,7 +1518,7 @@ static uint32_t header_guess_unitbytes(chd_file *chd)
     internal data structure and perform validation
 -------------------------------------------------*/
 
-static chd_error header_read(chd_file *chd, chd_header *header)
+static chd_error header_read(chd_file *chd)
 {
 	static const uint32_t header_sizes[CHD_HEADER_VERSION] = {
 		CHD_V1_HEADER_SIZE,
@@ -1526,7 +1531,7 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 	uint8_t rawheader[CHD_MAX_HEADER_SIZE];
 
 	/* punt if NULL */
-	if (header == NULL)
+	if (chd == NULL)
 		return CHDERR_INVALID_PARAMETER;
 
 	/* punt if invalid file */
@@ -1542,6 +1547,7 @@ static chd_error header_read(chd_file *chd, chd_header *header)
 		return CHDERR_INVALID_DATA;
 
 	/* extract the direct data */
+	chd_header *header = &chd->header;
 	memset(header, 0, sizeof(*header));
 	header->length  = get_bigendian_uint32_t(&rawheader[8]);
 	header->version = get_bigendian_uint32_t(&rawheader[12]);

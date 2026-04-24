@@ -37,6 +37,19 @@
 
 ***************************************************************************/
 
+/* Feature test macros: must come before any system header.
+ * Ensures fseeko/ftello are declared under strict C99/C11 and
+ * that 64-bit file offsets are used on 32-bit platforms (armhf,
+ * i386, and other time64/LFS rebuilds). */
+#if !defined(_WIN32) && !defined(__PS3__) && !defined(__SWITCH__) && !defined(__vita__)
+#  ifndef _POSIX_C_SOURCE
+#    define _POSIX_C_SOURCE 200809L
+#  endif
+#  ifndef _FILE_OFFSET_BITS
+#    define _FILE_OFFSET_BITS 64
+#  endif
+#endif
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2146,13 +2159,13 @@ static uint64_t core_stdio_fsize(void *file) {
 #elif defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
 	#define core_stdio_fseek_impl _fseeki64
 	#define core_stdio_ftell_impl _ftelli64
-#elif defined(_LARGEFILE_SOURCE) && defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64
-	#define core_stdio_fseek_impl fseeko64
-	#define core_stdio_ftell_impl ftello64
 #elif defined(__PS3__) && !defined(__PSL1GHT__) || defined(__SWITCH__) || defined(__vita__)
 	#define core_stdio_fseek_impl(x,y,z) fseek(x,(off_t)y,z)
 	#define core_stdio_ftell_impl(x) (off_t)ftell(x)
 #else
+	/* With _FILE_OFFSET_BITS=64 defined at the top of this TU, glibc
+	 * aliases fseeko/ftello to the 64-bit variants, so no *64 suffix
+	 * is needed. This is also the time64-safe spelling on armhf. */
 	#define core_stdio_fseek_impl fseeko
 	#define core_stdio_ftell_impl ftello
 #endif

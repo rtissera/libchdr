@@ -1583,8 +1583,12 @@ static chd_error header_read(chd_file *chd)
 			memcpy(header->parentmd5, &rawheader[60], CHD_MD5_BYTES);
 			{
 				uint32_t seclen = (header->version == 1) ? CHD_V1_SECTOR_SIZE : get_bigendian_uint32_t(&rawheader[76]);
+				uint64_t hunkbytes64 = (uint64_t)seclen * (uint64_t)header->obsolete_hunksize;
 				header->logicalbytes = (uint64_t)header->obsolete_cylinders * (uint64_t)header->obsolete_heads * (uint64_t)header->obsolete_sectors * (uint64_t)seclen;
-				header->hunkbytes = seclen * header->obsolete_hunksize;
+				/* reject malformed headers where hunkbytes would overflow uint32_t or is zero */
+				if (hunkbytes64 == 0 || hunkbytes64 > UINT32_MAX)
+					return CHDERR_INVALID_DATA;
+				header->hunkbytes = (uint32_t)hunkbytes64;
 			}
 			header->unitbytes          = header_guess_unitbytes(chd);
 			if (header->unitbytes == 0)
@@ -2069,6 +2073,10 @@ cleanup:
 
 static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t metaindex, metadata_entry *metaentry)
 {
+	/* cap traversal to guard against malformed CHDs with cyclic metadata chains */
+	uint32_t iter = 0;
+	#define CHD_MAX_METADATA_ENTRIES 65536
+
 	/* start at the beginning */
 	metaentry->offset = chd->header.metaoffset;
 	metaentry->prev = 0;
@@ -2077,6 +2085,9 @@ static chd_error metadata_find_entry(chd_file *chd, uint32_t metatag, uint32_t m
 	while (metaentry->offset != 0)
 	{
 		uint8_t	raw_meta_header[METADATA_HEADER_SIZE];
+
+		if (++iter > CHD_MAX_METADATA_ENTRIES)
+			return CHDERR_INVALID_DATA;
 
 		/* read the raw header */
 		if (!seek_and_read(chd, metaentry->offset, raw_meta_header, sizeof(raw_meta_header)))

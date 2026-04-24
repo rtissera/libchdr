@@ -99,6 +99,7 @@ set(CHDR_SOURCES
   src/libchdr_bitstream.c
   src/libchdr_cdrom.c
   src/libchdr_chd.c
+  src/libchdr_codec_avhuff.c
   src/libchdr_codec_cdfl.c
   src/libchdr_codec_cdlz.c
   src/libchdr_codec_cdzl.c

@@ -59,6 +59,7 @@
 
 #include "../include/libchdr/chd.h"
 #include "../include/libchdr/cdrom.h"
+#include "codec_avhuff.h"
 #include "codec_cdfl.h"
 #include "codec_cdlz.h"
 #include "codec_cdzl.h"
@@ -231,6 +232,7 @@ struct _chd_file
 		cdlz_codec_data			cdlz;		/* cdlz codec data */
 		cdfl_codec_data			cdfl;		/* cdfl codec data */
 		cdzs_codec_data			cdzs;		/* cdzs codec data */
+		avhuff_codec_data		avhuff;		/* avhuff codec data */
 	} codec_data;
 
 	uint8_t *					file_cache;		/* cache of underlying file */
@@ -409,8 +411,27 @@ static const codec_interface codec_interfaces[] =
 		cdzs_codec_free,
 		cdzs_codec_decompress,
 		NULL
+	},
+	/* V5 A/V Huffman (laserdisc) */
+	{
+		CHD_CODEC_AVHUFF,
+		"A/V Huffman",
+		FALSE,
+		avhuff_codec_init,
+		avhuff_codec_free,
+		avhuff_codec_decompress,
+		NULL
+	},
+	/* V3/V4 A/V Huffman (laserdisc) — CHDCOMPRESSION_AV */
+	{
+		CHDCOMPRESSION_AV,
+		"A/V Huffman (v3/v4)",
+		FALSE,
+		avhuff_codec_init,
+		avhuff_codec_free,
+		avhuff_codec_decompress,
+		NULL
 	}
-	
 };
 
 /***************************************************************************
@@ -1001,7 +1022,11 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 		/* initialize the codec */
 		if (newchd->codecintf[0]->init != NULL)
 		{
-			err = newchd->codecintf[0]->init(&newchd->codec_data.zlib, newchd->header.hunkbytes);
+			/* v1-v4 codecs that use their own state blob; zlib is the default */
+			void* codec = &newchd->codec_data.zlib;
+			if (newchd->header.compression[0] == CHDCOMPRESSION_AV)
+				codec = &newchd->codec_data.avhuff;
+			err = newchd->codecintf[0]->init(codec, newchd->header.hunkbytes);
 			if (err != CHDERR_NONE)
 				EARLY_EXIT(err);
 		}
@@ -1080,6 +1105,10 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 
 					case CHD_CODEC_CD_ZSTD:
 						codec = &newchd->codec_data.cdzs;
+						break;
+
+					case CHD_CODEC_AVHUFF:
+						codec = &newchd->codec_data.avhuff;
 						break;
 				}
 
@@ -1177,7 +1206,12 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	if (chd->header.version < 5)
 	{
 		if (chd->codecintf[0] != NULL && chd->codecintf[0]->free != NULL)
-			chd->codecintf[0]->free(&chd->codec_data.zlib);
+		{
+			void *codec = &chd->codec_data.zlib;
+			if (chd->header.compression[0] == CHDCOMPRESSION_AV)
+				codec = &chd->codec_data.avhuff;
+			chd->codecintf[0]->free(codec);
+		}
 	}
 	else
 	{
@@ -1241,6 +1275,10 @@ CHD_EXPORT void chd_close(chd_file *chd)
 
 				case CHD_CODEC_CD_ZSTD:
 					codec = &chd->codec_data.cdzs;
+					break;
+
+				case CHD_CODEC_AVHUFF:
+					codec = &chd->codec_data.avhuff;
 					break;
 			}
 
@@ -1833,6 +1871,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				/* now decompress using the codec */
 				err = CHDERR_NONE;
 				codec = &chd->codec_data.zlib;
+				if (chd->header.compression[0] == CHDCOMPRESSION_AV)
+					codec = &chd->codec_data.avhuff;
 				if (chd->codecintf[0]->decompress != NULL)
 					err = chd->codecintf[0]->decompress(codec, compressed_bytes, entry->length, dest, chd->header.hunkbytes);
 				if (err != CHDERR_NONE)
@@ -1952,6 +1992,10 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 					case CHD_CODEC_CD_ZSTD:
 						codec = &chd->codec_data.cdzs;
+						break;
+
+					case CHD_CODEC_AVHUFF:
+						codec = &chd->codec_data.avhuff;
 						break;
 				}
 				if (codec==NULL)

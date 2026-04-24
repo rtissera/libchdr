@@ -1452,7 +1452,7 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 			uint32_t faux_length;
 
 			/* fill in the faux metadata */
-			sprintf(faux_metadata, HARD_DISK_METADATA_FORMAT, chd->header.obsolete_cylinders, chd->header.obsolete_heads, chd->header.obsolete_sectors, (chd->header.obsolete_hunksize != 0) ? (chd->header.hunkbytes / chd->header.obsolete_hunksize) : 0);
+			snprintf(faux_metadata, sizeof(faux_metadata), HARD_DISK_METADATA_FORMAT, chd->header.obsolete_cylinders, chd->header.obsolete_heads, chd->header.obsolete_sectors, (chd->header.obsolete_hunksize != 0) ? (chd->header.hunkbytes / chd->header.obsolete_hunksize) : 0);
 			faux_length = (uint32_t)strlen(faux_metadata) + 1;
 
 			/* copy the metadata itself */

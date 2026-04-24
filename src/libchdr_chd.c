@@ -1708,6 +1708,14 @@ static chd_error header_read(chd_file *chd)
 	if (header->hunkbytes >= CHD_MAX_HUNK_SIZE || ((uint64_t)header->hunkbytes * (uint64_t)header->totalhunks) >= CHD_MAX_FILE_SIZE)
 		return CHDERR_INVALID_DATA;
 
+	/* totalhunks is used to size the map allocation; a malformed header
+	 * can otherwise request multi-GB allocations for map[] even when the
+	 * file itself is tiny. Every hunk map entry consumes at least one bit
+	 * in the compressed on-disk map, so totalhunks cannot legitimately
+	 * exceed file_size * 8. */
+	if ((uint64_t)header->totalhunks > chd->file_size * 8)
+		return CHDERR_INVALID_DATA;
+
 	/* guess it worked */
 	return CHDERR_NONE;
 }

@@ -69,6 +69,15 @@ instead of a dated snapshot.
 
 - Bundled `zlib-1.3.1/` directory (dead since the switch to miniz).
 
+### Known limitations
+
+- **AVHuff codec is not implemented** (#69). CHDs produced with the
+  `CHDCOMPRESSION_AV` codec (CHDv1-v4) or the `avhu` codec tag (CHDv5)
+  return `CHDERR_UNSUPPORTED_FORMAT`. In practice this only affects
+  laserdisc CHDs (Dragon's Lair, Space Ace, Time Traveler, and other
+  MAME/Daphne/Hypseus Singe targets). All other consumers (PS1, PS2,
+  Saturn, Dreamcast, arcade HD, etc.) are unaffected.
+
 ## ABI
 
 `SOVERSION = PROJECT_VERSION_MAJOR`. Bumped only on ABI breaks. The

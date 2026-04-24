@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_cdfl.h"
+#include "codec_cdfl.h"
 
 #include <stddef.h>
 #include <stdlib.h>

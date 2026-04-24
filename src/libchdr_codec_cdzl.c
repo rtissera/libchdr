@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_cdzl.h"
+#include "codec_cdzl.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -50,6 +50,8 @@ chd_error cdzl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		&cdzl->base_decompressor, zlib_codec_decompress,
 #if WANT_SUBCODE
 		&cdzl->subcode_decompressor, zlib_codec_decompress,
+#else
+		NULL, NULL,
 #endif
 		src, complen, dest, destlen
 	);

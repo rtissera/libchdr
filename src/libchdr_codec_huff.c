@@ -1,4 +1,4 @@
-#include "../include/libchdr/codec_huff.h"
+#include "codec_huff.h"
 
 #include <stddef.h>
 #include <stdlib.h>

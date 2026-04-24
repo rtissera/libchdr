@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "chd.h"
+#include "../include/libchdr/chd.h"
 
 struct huffman_decoder;
 

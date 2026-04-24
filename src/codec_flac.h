@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#include "chd.h"
-#include "flac.h"
+#include "../include/libchdr/chd.h"
+#include "../include/libchdr/flac.h"
 
 /* codec-private data for the FLAC codec */
 typedef struct _flac_codec_data flac_codec_data;

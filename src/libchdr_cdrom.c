@@ -423,14 +423,16 @@ void ecc_clear(uint8_t *sector)
 chd_error cd_codec_decompress(
 	uint8_t *buffer,
 	void *base_decompressor, chd_codec_interface_decompress base_decompress,
-#if WANT_SUBCODE
 	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
-#endif
 	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
 {
 	uint32_t framenum;
 	chd_error decomp_err;
 	uint32_t complen_base;
+#if !WANT_SUBCODE
+	(void)subcode_decompressor;
+	(void)subcode_decompress;
+#endif
 
 	/* determine header bytes */
 	const uint32_t frames = destlen / CD_FRAME_SIZE;

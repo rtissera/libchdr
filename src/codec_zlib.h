@@ -10,11 +10,11 @@
 #include <zlib.h>
 typedef uInt zlib_alloc_size;
 #else
-#include "../../deps/miniz-3.1.1/miniz.h"
+#include "../deps/miniz-3.1.1/miniz.h"
 typedef size_t zlib_alloc_size;
 #endif
 
-#include "chd.h"
+#include "../include/libchdr/chd.h"
 
 /* codec-private data for the ZLIB codec */
 #define MAX_ZLIB_ALLOCS				64

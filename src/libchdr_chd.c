@@ -96,8 +96,14 @@
 
 #define CHD_MAX_HUNK_SIZE				(128 * 1024 * 1024) /* hunk size probably shouldn't be more than 128MB */
 
-/* we're currently only using this for CD/DVDs, if we end up with more than 10GB data, it's probably invalid */
-#define CHD_MAX_FILE_SIZE				(10ULL * 1024 * 1024 * 1024)
+/* Sanity cap on logical (decompressed) CHD size. Large enough to cover
+ * any realistic disc image: BD50 PS3 ISOs (50 GB), arcade laserdisc
+ * CHDs, and future-proofing for larger optical formats. 1 TB is well
+ * under any integer-overflow threshold, and actual allocation safety
+ * is further bounded by CHD_MAX_HUNK_SIZE and the totalhunks check in
+ * header_read. Previously 10 GB, which rejected legitimate PS3 ISOs
+ * (#147). */
+#define CHD_MAX_FILE_SIZE				(1024ULL * 1024 * 1024 * 1024)
 
 #define COOKIE_VALUE				0xbaadf00d
 

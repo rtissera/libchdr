@@ -45,8 +45,10 @@
 #  ifndef _POSIX_C_SOURCE
 #    define _POSIX_C_SOURCE 200809L
 #  endif
-#  ifndef _FILE_OFFSET_BITS
-#    define _FILE_OFFSET_BITS 64
+#  ifndef __ANDROID__
+#    ifndef _FILE_OFFSET_BITS
+#      define _FILE_OFFSET_BITS 64
+#    endif
 #  endif
 #endif
 

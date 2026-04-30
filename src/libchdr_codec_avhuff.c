@@ -107,15 +107,16 @@ chd_error avhuff_codec_init(void *codec, uint32_t hunkbytes)
 
 	memset(avhuff, 0, sizeof(*avhuff));
 
+	/* Y/Cb/Cr decoders are required for every AVHuff hunk; allocate eagerly.
+	 * audiohi/audiolo are only used by the huffman audio sub-codec (treesize
+	 * non-zero and non-0xffff). Modern chdman emits FLAC audio (treesize=
+	 * 0xffff) almost exclusively, so defer those 256 KiB until first use. */
 	avhuff->ycontext  = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
 	avhuff->cbcontext = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
 	avhuff->crcontext = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
-	avhuff->audiohi   = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
-	avhuff->audiolo   = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
 
 	if (avhuff->ycontext == NULL || avhuff->cbcontext == NULL ||
-	    avhuff->crcontext == NULL || avhuff->audiohi == NULL ||
-	    avhuff->audiolo == NULL)
+	    avhuff->crcontext == NULL)
 	{
 		avhuff_codec_free(codec);
 		return CHDERR_OUT_OF_MEMORY;
@@ -156,9 +157,11 @@ static chd_error decode_audio_flac(avhuff_codec_data *avhuff, uint32_t channels,
 	uint32_t chnum;
 
 	/* CHD raw hunks: destination is always big-endian, dxor = 0.
-	 * flac_decoder_decode_interleaved takes swap_endian. On a big-endian
-	 * host we want no swap (source is BE); on LE host we want swap. */
-	int swap_endian = (flac_decoder_detect_native_endian() == 0) ? 1 : 0;
+	 * flac_decoder_decode_interleaved writes in native byte order; pass
+	 * swap_endian=1 so the output is byte-swapped to BE on LE hosts.
+	 * detect_native_endian() returns 1 on LE, 0 on BE — that's exactly
+	 * the swap value we need. */
+	int swap_endian = flac_decoder_detect_native_endian();
 
 	for (chnum = 0; chnum < channels; chnum++)
 	{
@@ -198,6 +201,21 @@ static chd_error decode_audio(avhuff_codec_data *avhuff, uint32_t channels,
 	if (treesize != 0)
 	{
 		enum huffman_error hufferr;
+
+		/* lazy-allocate the audio huffman decoders on first huffman-audio
+		 * hunk; reused for the lifetime of the codec instance */
+		if (avhuff->audiohi == NULL)
+		{
+			avhuff->audiohi = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
+			if (avhuff->audiohi == NULL)
+				return CHDERR_OUT_OF_MEMORY;
+		}
+		if (avhuff->audiolo == NULL)
+		{
+			avhuff->audiolo = create_huffman_decoder(AVHUFF_NUMCODES, AVHUFF_MAXBITS);
+			if (avhuff->audiolo == NULL)
+				return CHDERR_OUT_OF_MEMORY;
+		}
 
 		bitbuf = create_bitstream(source, treesize);
 		if (bitbuf == NULL)

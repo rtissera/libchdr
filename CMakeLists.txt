@@ -29,6 +29,8 @@ if(BUILD_FUZZER)
   set(BUILD_SHARED_LIBS OFF)
 endif()
 
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+
 include(GNUInstallDirs)
 
 #--------------------------------------------------
@@ -55,12 +57,8 @@ endif()
 
 # zstd
 if (WITH_SYSTEM_ZSTD)
-  find_package(zstd REQUIRED)
-  if(TARGET zstd::libzstd_shared)
-    list(APPEND PLATFORM_LIBS zstd::libzstd_shared)
-  else()
-    list(APPEND PLATFORM_LIBS zstd::libzstd_static)
-  endif()
+  find_package(zstd MODULE REQUIRED)
+  list(APPEND PLATFORM_LIBS zstd::zstd)
   list(APPEND CHDR_DEFINES CHDR_SYSTEM_ZSTD)
 else()
   if(NOT TARGET zstd)

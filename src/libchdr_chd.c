@@ -1365,8 +1365,12 @@ CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbac
 	if (callbacks == NULL || header == NULL)
 		return CHDERR_INVALID_PARAMETER;
 
+	chd.cookie = COOKIE_VALUE;
 	chd.file.callbacks = callbacks;
 	chd.file.argp = (void*)user_data;
+	chd.file_size = core_fsize(&chd.file);
+	if ((int64_t)chd.file_size <= 0)
+		return CHDERR_INVALID_FILE;
 
 	/* attempt to read the header */
 	err = header_read(&chd);

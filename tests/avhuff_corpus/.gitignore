@@ -1,0 +1,9 @@
+# Don't commit downloaded test artifacts (large + redistributable from upstream)
+*.chd
+*.avi
+*.bin
+*.raw
+!.gitignore
+!README.md
+!fetch.sh
+!run_regression.sh

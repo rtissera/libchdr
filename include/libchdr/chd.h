@@ -416,7 +416,10 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 /* read one hunk from the CHD file */
 CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer);
 
-
+/* read one hunk from the CHD file without touching it's state so this method is thread-safe
+ * compressed_buffer must be at least 'hunkbytes'-bytes sized.
+ * 'fpread' file callback is required for this method, otherwise 'CHDERR_NOT_SUPPORTED' will be returned. */
+CHD_EXPORT chd_error chd_read_threadsafe(chd_file *chd, uint32_t hunknum, void *buffer, void *compressed_buffer);
 
 /* ----- metadata management ----- */
 

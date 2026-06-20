@@ -52,6 +52,20 @@
 #  endif
 #endif
 
+/* Includes used to implement "fpread" on POSIX and Windows */
+#if defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
+#	ifndef _PREAD_WINDOWS
+#		define _PREAD_WINDOWS 1
+#	endif
+#include <windows.h>
+#include <io.h>
+#elif defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
+#	ifndef _PREAD_UNISTD
+#		define _PREAD_UNISTD 1
+#	endif
+#include <unistd.h>
+#endif
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -238,6 +252,8 @@ struct _chd_file
 	uint8_t *					file_cache;		/* cache of underlying file */
 };
 
+/* definition of helper that reads N bytes from file by given offset */
+typedef int (buffer_filler) (chd_file *chd, uint64_t position, void *buffer, size_t total_bytes);
 
 /***************************************************************************
     GLOBAL VARIABLES
@@ -257,6 +273,7 @@ static size_t core_stdio_fread(void *ptr, size_t size, size_t nmemb, void *file)
 static int core_stdio_fclose(void *file);
 static int core_stdio_fclose_nonowner(void *file); /* alternate fclose used by chd_open_file */
 static int core_stdio_fseek(void* file, int64_t offset, int whence);
+static size_t core_stdio_fpread(void *file, void *ptr, size_t len, int64_t offset);
 
 /* Legacy core_file wrappers */
 static uint64_t core_legacy_fsize(void *file);
@@ -268,7 +285,7 @@ static int core_legacy_fseek(void* file, int64_t offset, int whence);
 static chd_error header_read(chd_file *chd);
 
 /* internal hunk read/write */
-static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest);
+static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest, uint8_t *compressed_dest, buffer_filler *reader);
 
 /* internal map access */
 static chd_error map_read(chd_file *chd);
@@ -429,6 +446,21 @@ static CHDR_INLINE int seek_and_read(chd_file *chd, uint64_t position, void *buf
 	if (core_fseek(&chd->file, position, SEEK_SET) != 0)
 		return FALSE;
 	if (core_fread(&chd->file, buffer, total_bytes) != total_bytes)
+		return FALSE;
+
+	return TRUE;
+}
+
+
+/*-------------------------------------------------
+    read_at - read data from file at
+	specified position using 'pread'
+-------------------------------------------------*/
+static CHDR_INLINE int read_at(chd_file *chd, uint64_t position, void *buffer, size_t total_bytes)
+{
+	if (!core_has_fpread(&chd->file)) 
+		return FALSE;
+	if (core_fpread(&chd->file, buffer, total_bytes, position) != total_bytes)
 		return FALSE;
 
 	return TRUE;
@@ -858,21 +890,32 @@ static const core_file_callbacks core_stdio = {
 	core_stdio_fsize,
 	core_stdio_fread,
 	core_stdio_fclose,
-	core_stdio_fseek
+	core_stdio_fseek,
+#if defined (_PREAD_UNISTD) || defined (_PREAD_WINDOWS)
+	core_stdio_fpread,
+#else
+	NULL,
+#endif
 };
 
 static const core_file_callbacks core_stdio_nonowner = {
 	core_stdio_fsize,
 	core_stdio_fread,
 	core_stdio_fclose_nonowner,
-	core_stdio_fseek
+	core_stdio_fseek,
+#if defined (_PREAD_UNISTD) || defined (_PREAD_WINDOWS)
+	core_stdio_fpread,
+#else
+	NULL,
+#endif
 };
 
 static const core_file_callbacks core_legacy = {
 	core_legacy_fsize,
 	core_legacy_fread,
 	core_legacy_fclose,
-	core_legacy_fseek
+	core_legacy_fseek,
+	NULL,
 };
 
 /*-------------------------------------------------
@@ -978,11 +1021,6 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	}
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
-
-	/* allocate the temporary compressed buffer */
-	newchd->compressed = (uint8_t *)malloc(newchd->header.hunkbytes);
-	if (newchd->compressed == NULL)
-		EARLY_EXIT(err = CHDERR_OUT_OF_MEMORY);
 
 	/* find the codec interface */
 	if (newchd->header.version < 5)
@@ -1448,9 +1486,40 @@ CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer)
 	if (hunknum >= chd->header.totalhunks)
 		return CHDERR_HUNK_OUT_OF_RANGE;
 
+	
+	/* allocate the temporary compressed buffer if it wasn't allocated earlier */
+	if (chd->compressed == NULL)
+		chd->compressed = (uint8_t *)malloc(chd->header.hunkbytes);
+	if (chd->compressed == NULL)
+		return CHDERR_OUT_OF_MEMORY;
+
 	/* perform the read */
-	return hunk_read_into_memory(chd, hunknum, (uint8_t *)buffer);
+	return hunk_read_into_memory(chd, hunknum, (uint8_t *)buffer, chd->compressed, seek_and_read);
 }
+
+/*-------------------------------------------------
+    chd_read_threadsafe - read a single hunk from the CHD
+    file without touching it's state
+-------------------------------------------------*/
+
+CHD_EXPORT chd_error chd_read_threadsafe(chd_file *chd, uint32_t hunknum, void *buffer, void *compressed_buffer)
+{
+	/* punt if NULL or invalid */
+	if (chd == NULL || chd->cookie != COOKIE_VALUE)
+		return CHDERR_INVALID_PARAMETER;
+
+	/* unsupported if no 'fpread' provided */
+	if (!core_has_fpread(&chd->file))
+		return CHDERR_NOT_SUPPORTED;
+
+	/* if we're past the end, fail */
+	if (hunknum >= chd->header.totalhunks)
+		return CHDERR_HUNK_OUT_OF_RANGE;
+
+	/* perform the read */
+	return hunk_read_into_memory(chd, hunknum, (uint8_t *)buffer, compressed_buffer, read_at);
+}
+
 
 /***************************************************************************
     METADATA MANAGEMENT
@@ -1754,7 +1823,7 @@ static chd_error header_read(chd_file *chd)
     hunk
 -------------------------------------------------*/
 
-static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size)
+static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size, uint8_t *compressed_dest, buffer_filler *reader)
 {
 	if (chd->file_cache != NULL)
 	{
@@ -1769,9 +1838,9 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 		if (size > chd->header.hunkbytes)
 			return NULL;
 
-		if (!seek_and_read(chd, offset, chd->compressed, size))
+		if (!reader(chd, offset, compressed_dest, size))
 			return NULL;
-		return chd->compressed;
+		return compressed_dest;
 	}
 }
 
@@ -1780,7 +1849,7 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
     hunk
 -------------------------------------------------*/
 
-static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t size, uint8_t *dest)
+static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t size, uint8_t *dest, buffer_filler *reader)
 {
 	if (chd->file_cache != NULL)
 	{
@@ -1791,7 +1860,7 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
-		if (!seek_and_read(chd, offset, dest, size))
+		if (!reader(chd, offset, dest, size))
 			return CHDERR_READ_ERROR;
 	}
 	return CHDERR_NONE;
@@ -1802,7 +1871,7 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
     memory at the given location
 -------------------------------------------------*/
 
-static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest)
+static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest, uint8_t *compressed_dest, buffer_filler *reader)
 {
 	chd_error err;
 
@@ -1832,7 +1901,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				void *codec = NULL;
 
 				/* read it into the decompression buffer */
-				compressed_bytes = hunk_read_compressed(chd, entry->offset, entry->length);
+				compressed_bytes = hunk_read_compressed(chd, entry->offset, entry->length, compressed_dest, reader);
 				if (compressed_bytes == NULL)
 					return CHDERR_READ_ERROR;
 
@@ -1848,7 +1917,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 			/* uncompressed data */
 			case V34_MAP_ENTRY_TYPE_UNCOMPRESSED:
-				err = hunk_read_uncompressed(chd, entry->offset, chd->header.hunkbytes, dest);
+				err = hunk_read_uncompressed(chd, entry->offset, chd->header.hunkbytes, dest, reader);
 				if (err != CHDERR_NONE)
 					return err;
 				break;
@@ -1862,11 +1931,11 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 			/* self-referenced data */
 			case V34_MAP_ENTRY_TYPE_SELF_HUNK:
-				return hunk_read_into_memory(chd, entry->offset, dest);
+				return hunk_read_into_memory(chd, entry->offset, dest, compressed_dest, reader);
 
 			/* parent-referenced data */
 			case V34_MAP_ENTRY_TYPE_PARENT_HUNK:
-				err = hunk_read_into_memory(chd->parent, entry->offset, dest);
+				err = hunk_read_into_memory(chd->parent, entry->offset, dest, compressed_dest, reader);
 				if (err != CHDERR_NONE)
 					return err;
 				break;
@@ -1896,7 +1965,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 			else if (m_parent_missing)
 				throw CHDERR_REQUIRES_PARENT; */
 			} else if (chd->parent) {
-				err = hunk_read_into_memory(chd->parent, hunknum, dest);
+				err = hunk_read_into_memory(chd->parent, hunknum, dest, compressed_dest, reader);
 				if (err != CHDERR_NONE)
 					return err;
 			} else {
@@ -1919,7 +1988,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 			case COMPRESSION_TYPE_1:
 			case COMPRESSION_TYPE_2:
 			case COMPRESSION_TYPE_3:
-				compressed_bytes = hunk_read_compressed(chd, blockoffs, blocklen);
+				compressed_bytes = hunk_read_compressed(chd, blockoffs, blocklen, compressed_dest, reader);
 				if (compressed_bytes == NULL)
 					return CHDERR_READ_ERROR;
 				switch (chd->codecintf[rawmap[0]]->compression)
@@ -1972,7 +2041,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				return CHDERR_NONE;
 
 			case COMPRESSION_NONE:
-				err = hunk_read_uncompressed(chd, blockoffs, blocklen, dest);
+				err = hunk_read_uncompressed(chd, blockoffs, blocklen, dest, reader);
 				if (err != CHDERR_NONE)
 					return err;
 #if VERIFY_BLOCK_CRC
@@ -1982,7 +2051,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				return CHDERR_NONE;
 
 			case COMPRESSION_SELF:
-				return hunk_read_into_memory(chd, blockoffs, dest);
+				return hunk_read_into_memory(chd, blockoffs, dest, compressed_dest, reader);
 
 			case COMPRESSION_PARENT:
 			{
@@ -1994,20 +2063,20 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 				/* blockoffs is aligned to units_in_hunk */
 				if (blockoffs % units_in_hunk == 0) {
-					return hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, dest);
+					return hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, dest, compressed_dest, reader);
 				/* blockoffs is not aligned to units_in_hunk */
 				} else {
 					uint32_t unit_in_hunk = blockoffs % units_in_hunk;
 					uint8_t *buf = (uint8_t*)malloc(chd->header.hunkbytes);
 					/* Read first half of hunk which contains blockoffs */
-					err = hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, buf);
+					err = hunk_read_into_memory(chd->parent, blockoffs / units_in_hunk, buf, compressed_dest, reader);
 					if (err != CHDERR_NONE) {
 						free(buf);
 						return err;
 					}
 					memcpy(dest, buf + unit_in_hunk * chd->header.unitbytes, (units_in_hunk - unit_in_hunk) * chd->header.unitbytes);
 					/* Read second half of hunk which contains blockoffs */
-					err = hunk_read_into_memory(chd->parent, (blockoffs / units_in_hunk) + 1, buf);
+					err = hunk_read_into_memory(chd->parent, (blockoffs / units_in_hunk) + 1, buf, compressed_dest, reader);
 					if (err != CHDERR_NONE) {
 						free(buf);
 						return err;
@@ -2221,6 +2290,39 @@ static int core_stdio_fclose_nonowner(void *file) {
 static int core_stdio_fseek(void* file, int64_t offset, int whence) {
 	return core_stdio_fseek_impl((FILE*)file, offset, whence);
 }
+
+/*-------------------------------------------------
+	core_stdio_fpread - core_file wrapper over pread ready for FILE*
+-------------------------------------------------*/
+static size_t core_stdio_fpread(void *file, void *ptr, size_t len, int64_t offset) {
+#if defined _PREAD_UNISTD
+	return pread(fileno((FILE*)file), ptr, len, offset);
+#elif defined _PREAD_WINDOWS
+	/* Windows does not have "pread" function 
+	 * but we can implement it with ReadFile and OVERLAPPED
+	 * Reference: https://github.com/aleitner/windows_pread */
+	long unsigned int read_bytes = 0;
+
+    OVERLAPPED overlapped;
+    memset(&overlapped, 0, sizeof(OVERLAPPED));
+
+    overlapped.OffsetHigh = (uint32_t)((offset & 0xFFFFFFFF00000000LL) >> 32);
+    overlapped.Offset = (uint32_t)(offset & 0xFFFFFFFFLL);
+
+    HANDLE fhandle = (HANDLE)_get_osfhandle(fileno((FILE*)file));
+    SetLastError(0);
+    int RF = ReadFile(fhandle, ptr, len, &read_bytes, &overlapped);
+
+    /* For some reason it errors when it hits end of file so we don't want to check that */
+    if ((RF == 0) && GetLastError() != ERROR_HANDLE_EOF)
+		return (size_t)-1;
+
+    return (size_t)read_bytes;
+#else
+	return (size_t)-1;
+#endif
+}
+
 
 /*-------------------------------------------------
 	core_legacy_fsize - legacy core_file wrapper

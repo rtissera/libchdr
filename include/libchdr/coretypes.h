@@ -32,6 +32,9 @@ typedef struct chd_core_file_callbacks {
 
 	// fseek clone
 	int (*fseek)(void*, int64_t, int);
+
+	// pread clone
+	size_t (*fpread)(void*, void*, size_t, int64_t);
 } core_file_callbacks;
 
 typedef struct chd_core_file_callbacks_and_argp {
@@ -70,6 +73,14 @@ static CHDR_INLINE int core_fseek(const core_file_callbacks_and_argp* fp, int64_
 static CHDR_INLINE uint64_t core_fsize(const core_file_callbacks_and_argp *fp)
 {
 	return fp->callbacks->fsize(fp->argp);
+}
+
+static CHDR_INLINE int core_has_fpread(const core_file_callbacks_and_argp *fp) {
+	return fp->callbacks->fpread != NULL;
+}
+
+static CHDR_INLINE size_t core_fpread(const core_file_callbacks_and_argp *fp, void *ptr, size_t len, int64_t offset) {
+	return fp->callbacks->fpread(fp->argp, ptr, len, offset);
 }
 
 #endif

@@ -2166,7 +2166,8 @@ static void *core_stdio_fopen(char const *path) {
 -------------------------------------------------*/
 static uint64_t core_stdio_fsize(void *file) {
 #if defined USE_LIBRETRO_VFS
-	#define core_stdio_fseek_impl fseek
+	/* The libretro VFS fseek returns the new file position, so we adapt it as needed. */
+	#define core_stdio_fseek_impl(file,offset,whence) (fseek(file, offset, whence) < 0 ? -1 : 0)
 	#define core_stdio_ftell_impl ftell
 #elif defined(__WIN32__) || defined(_WIN32) || defined(WIN32) || defined(__WIN64__)
 	#define core_stdio_fseek_impl _fseeki64

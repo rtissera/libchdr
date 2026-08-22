@@ -16,7 +16,7 @@
 #define MINIZ_NO_TIME
 #endif
 
-#include "deps/lzma-25.01/src/LzmaDec.c"
+#include "deps/lzma-26.02/src/LzmaDec.c"
 #include "deps/miniz-3.1.2/miniz.c"
 #include "deps/zstd-1.5.7/zstddeclib.c"
 

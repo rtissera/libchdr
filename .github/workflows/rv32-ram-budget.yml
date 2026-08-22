@@ -63,9 +63,9 @@ jobs:
             -Wl,--wrap=malloc -Wl,--wrap=free -Wl,--wrap=realloc -Wl,--wrap=calloc \
             -o tests/rv32/fw.elf tests/rv32/fw.c \
             build-rv32/libchdr-static.a \
-            build-rv32/deps/lzma-25.01/libchdr-lzma.a \
+            build-rv32/deps/lzma-26.02/libchdr-lzma.a \
             build-rv32/deps/zstd-1.5.7/libzstd.a \
-            build-rv32/deps/miniz-3.1.1/libminiz.a
+            build-rv32/deps/miniz-3.1.2/libminiz.a
 
       - name: Run under qemu-system-riscv32 and enforce RAM budget
         run: |

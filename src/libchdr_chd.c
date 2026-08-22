@@ -73,7 +73,7 @@
 #include "../include/libchdr/huffman.h"
 #include "../include/libchdr/macros.h"
 
-#include "../deps/lzma-25.01/include/LzmaDec.h"
+#include "../deps/lzma-26.02/include/LzmaDec.h"
 
 #undef TRUE
 #undef FALSE

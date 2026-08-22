@@ -7,10 +7,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [macos-latest, ubuntu-26.04-arm, ubuntu-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Configure CMake
         run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release

@@ -302,6 +302,15 @@ struct _chd_file
 	 * deferred to the first hunk_read_into_memory() call that actually needs
 	 * that slot - see ensure_codec_ready(). */
 	uint8_t						codec_lazy_initialized[4];
+
+	/* `compressed` is grown on demand to the largest per-hunk compressed
+	 * length actually read (map entries carry that length before the read
+	 * happens), instead of being preallocated to the worst case
+	 * (header.hunkbytes) at open() - see hunk_read_compressed(). Real
+	 * compressed hunks are typically well under hunkbytes, and for a
+	 * session that only touches part of a file (e.g. sequential playback)
+	 * peak usage tracks what was actually touched, not the whole file. */
+	uint32_t					compressed_capacity;
 #endif
 };
 
@@ -1652,10 +1661,17 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
 
+#if LOWRAM_MAP
+	/* grown on demand in hunk_read_compressed() instead of preallocated to
+	 * the worst case (header.hunkbytes) here - see compressed_capacity. */
+	newchd->compressed = NULL;
+	newchd->compressed_capacity = 0;
+#else
 	/* allocate the temporary compressed buffer */
 	newchd->compressed = (uint8_t *)malloc(newchd->header.hunkbytes);
 	if (newchd->compressed == NULL)
 		EARLY_EXIT(err = CHDERR_OUT_OF_MEMORY);
+#endif
 
 	/* find the codec interface */
 	if (newchd->header.version < 5)
@@ -2468,9 +2484,25 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 	}
 	else
 	{
-		/* make sure it isn't larger than the compressed buffer */
+		/* make sure it isn't larger than a legitimate hunk could ever be */
 		if (size > chd->header.hunkbytes)
 			return NULL;
+
+#if LOWRAM_MAP
+		/* grow the scratch buffer to fit this hunk's actual compressed
+		 * length instead of always carrying a hunkbytes-sized buffer (see
+		 * compressed_capacity). Monotonic: only grows, never shrinks, so a
+		 * realloc failure here leaves the existing buffer/capacity intact
+		 * and this call simply fails - the chd_file stays consistent. */
+		if (size > chd->compressed_capacity)
+		{
+			uint8_t *grown = (uint8_t*)realloc(chd->compressed, size);
+			if (grown == NULL)
+				return NULL;
+			chd->compressed = grown;
+			chd->compressed_capacity = (uint32_t)size;
+		}
+#endif
 
 		if (!seek_and_read(chd, offset, chd->compressed, size))
 			return NULL;

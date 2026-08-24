@@ -27,7 +27,7 @@
 #endif
 
 #ifndef LOWRAM_MAP_CHECKPOINT_STRIDE
-#define LOWRAM_MAP_CHECKPOINT_STRIDE 512
+#define LOWRAM_MAP_CHECKPOINT_STRIDE 2048
 #endif
 
 /* Under LOWRAM_MAP, also replace each huffman_decoder's full 2^maxbits

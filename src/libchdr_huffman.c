@@ -132,7 +132,14 @@ struct huffman_decoder* create_huffman_decoder(int numcodes, int maxbits)
 	decoder = (struct huffman_decoder*)malloc(sizeof(struct huffman_decoder));
 	decoder->numcodes = numcodes;
 	decoder->maxbits = maxbits;
+#if LOWRAM_MAP
+	decoder->l1bits = MIN(maxbits, LOWRAM_MAP_HUFFMAN_L1BITS);
+	decoder->lookup = (lookup_value*)malloc(sizeof(lookup_value) * (1u << decoder->l1bits));
+	decoder->subtable = NULL;
+	decoder->subtable_count = 0;
+#else
 	decoder->lookup = (lookup_value*)malloc(sizeof(lookup_value) * (1 << maxbits));
+#endif
 	decoder->huffnode = (struct node_t*)malloc(sizeof(struct node_t) * numcodes);
 	decoder->datahisto = NULL;
 	decoder->prevdata = 0;
@@ -146,6 +153,10 @@ void delete_huffman_decoder(struct huffman_decoder* decoder)
 	{
 		if (decoder->lookup != NULL)
 			free(decoder->lookup);
+#if LOWRAM_MAP
+		if (decoder->subtable != NULL)
+			free(decoder->subtable);
+#endif
 		if (decoder->huffnode != NULL)
 			free(decoder->huffnode);
 		free(decoder);
@@ -161,13 +172,28 @@ void delete_huffman_decoder(struct huffman_decoder* decoder)
 uint32_t huffman_decode_one(struct huffman_decoder* decoder, struct bitstream* bitbuf)
 {
 	/* peek ahead to get maxbits worth of data */
-	uint32_t bits = bitstream_peek(bitbuf, decoder->maxbits);
+	uint32_t window = bitstream_peek(bitbuf, decoder->maxbits);
+	lookup_value lookup;
 
-	/* look it up, then remove the actual number of bits for this code */
-	lookup_value lookup = decoder->lookup[bits];
+#if LOWRAM_MAP
+	/* two-level lookup: common (short-code) case is one table load, same as
+	 * the full-table path below; only codes longer than l1bits pay for a
+	 * second indirection into a small per-prefix subtable. */
+	uint32_t extrabits = decoder->maxbits - decoder->l1bits;
+	lookup = decoder->lookup[window >> extrabits];
+	if ((lookup & 0x1f) == 0)
+	{
+		uint32_t subid = lookup >> 5;
+		uint32_t idx2 = window & ((1u << extrabits) - 1);
+		lookup = decoder->subtable[subid * (1u << extrabits) + idx2];
+	}
+#else
+	/* look it up directly in the full table */
+	lookup = decoder->lookup[window];
+#endif
+
+	/* remove the actual number of bits for this code, then return the value */
 	bitstream_remove(bitbuf, lookup & 0x1f);
-
-	/* return the value */
 	return lookup >> 5;
 }
 
@@ -536,6 +562,139 @@ enum huffman_error huffman_assign_canonical_codes(struct huffman_decoder* decode
  *-------------------------------------------------
  */
 
+#if LOWRAM_MAP
+enum huffman_error huffman_build_lookup_table(struct huffman_decoder* decoder)
+{
+	uint32_t l1bits = decoder->l1bits;
+	uint32_t l1size = 1u << l1bits;
+	uint32_t extrabits = decoder->maxbits - l1bits;
+	uint32_t subsize = 1u << extrabits;
+	int32_t *prefix_subid;
+	uint32_t curcode, i;
+	enum huffman_error result = HUFFERR_NONE;
+
+	/* build-time-only bookkeeping: which first-level prefix already has a
+	 * subtable allocated for it. Not part of the decoder's persistent RAM
+	 * footprint - freed before this function returns. */
+	prefix_subid = (int32_t*)malloc(sizeof(int32_t) * l1size);
+	if (prefix_subid == NULL)
+		return HUFFERR_INTERNAL_INCONSISTENCY;
+	for (i = 0; i < l1size; i++)
+		prefix_subid[i] = -1;
+
+	/* Canonical-code coverage of the table is only guaranteed complete when
+	 * every assigned length participates in the Kraft-equality check in
+	 * huffman_assign_canonical_codes() (length 1 is exempt there, and a
+	 * degenerate/malformed tree can leave other gaps too). An unwritten
+	 * slot would otherwise hold malloc() garbage that can alias a valid
+	 * escape entry (bits field == 0) pointing at a subtable index that was
+	 * never allocated - decode would then index decoder->subtable with it
+	 * while subtable is still NULL. Prefill with a bounded, non-escaping
+	 * placeholder (matches the old single-level table's failure mode: wrong
+	 * output on malformed input, never a crash) before any real code fills
+	 * its range. */
+	for (i = 0; i < l1size; i++)
+		decoder->lookup[i] = MAKE_LOOKUP(0, 1);
+
+	/* pass 1: codes short enough to decode directly from the first-level
+	 * table (the common case - huffman assigns these to frequent symbols) */
+	for (curcode = 0; curcode < decoder->numcodes; curcode++)
+	{
+		struct node_t* node = &decoder->huffnode[curcode];
+		if (node->numbits > 0 && node->numbits <= l1bits)
+		{
+			int shift = l1bits - node->numbits;
+			lookup_value value = MAKE_LOOKUP(curcode, node->numbits);
+			lookup_value *dest = &decoder->lookup[node->bits << shift];
+			lookup_value *destend = &decoder->lookup[((node->bits + 1) << shift) - 1];
+			if (dest >= &decoder->lookup[l1size] || destend >= &decoder->lookup[l1size] || destend < dest)
+			{
+				result = HUFFERR_INTERNAL_INCONSISTENCY;
+				goto done;
+			}
+			while (dest <= destend)
+				*dest++ = value;
+		}
+	}
+
+	/* pass 2: rare, longer codes - escape from their first-level prefix
+	 * into a small per-prefix subtable. A prefix­-free (canonical) code
+	 * guarantees a long code's first-level prefix is never touched by a
+	 * pass-1 fill, so every subtable slot ends up written exactly once. */
+	for (curcode = 0; curcode < decoder->numcodes; curcode++)
+	{
+		struct node_t* node = &decoder->huffnode[curcode];
+		if (node->numbits > l1bits)
+		{
+			uint32_t restbits = node->numbits - l1bits;
+			uint32_t prefix = node->bits >> restbits;
+			uint32_t local_bits, subid;
+			int local_shift;
+			lookup_value value, *base, *dest, *destend;
+
+			if (prefix >= l1size)
+			{
+				result = HUFFERR_INTERNAL_INCONSISTENCY;
+				goto done;
+			}
+
+			if (prefix_subid[prefix] < 0)
+			{
+				lookup_value *grown;
+				if (decoder->subtable_count >= (1u << 11))
+				{
+					result = HUFFERR_TOO_MANY_CONTEXTS;
+					goto done;
+				}
+				subid = decoder->subtable_count;
+				grown = (lookup_value*)realloc(decoder->subtable,
+					sizeof(lookup_value) * subsize * (decoder->subtable_count + 1));
+				if (grown == NULL)
+				{
+					result = HUFFERR_INTERNAL_INCONSISTENCY;
+					goto done;
+				}
+				decoder->subtable = grown;
+				decoder->subtable_count++;
+				/* same bounded, non-escaping placeholder as the L1 prefill
+				 * above - an unwritten subtable slot must never look like
+				 * a 0-bit read (that would stall the caller's decode loop
+				 * without consuming input). */
+				{
+					uint32_t j;
+					lookup_value *sub = &decoder->subtable[subid * subsize];
+					for (j = 0; j < subsize; j++)
+						sub[j] = MAKE_LOOKUP(0, 1);
+				}
+				decoder->lookup[prefix] = MAKE_LOOKUP(subid, 0);
+				prefix_subid[prefix] = (int32_t)subid;
+			}
+			else
+			{
+				subid = (uint32_t)prefix_subid[prefix];
+			}
+
+			local_bits = node->bits - (prefix << restbits);
+			local_shift = (int)extrabits - (int)restbits;
+			value = MAKE_LOOKUP(curcode, node->numbits);
+			base = &decoder->subtable[subid * subsize];
+			dest = &base[local_bits << local_shift];
+			destend = &base[((local_bits + 1) << local_shift) - 1];
+			if (dest >= &base[subsize] || destend >= &base[subsize] || destend < dest)
+			{
+				result = HUFFERR_INTERNAL_INCONSISTENCY;
+				goto done;
+			}
+			while (dest <= destend)
+				*dest++ = value;
+		}
+	}
+
+done:
+	free(prefix_subid);
+	return result;
+}
+#else
 enum huffman_error huffman_build_lookup_table(struct huffman_decoder* decoder)
 {
 	const lookup_value* lookupend = &decoder->lookup[(1u << decoder->maxbits)];
@@ -567,3 +726,4 @@ enum huffman_error huffman_build_lookup_table(struct huffman_decoder* decoder)
 
 	return HUFFERR_NONE;
 }
+#endif

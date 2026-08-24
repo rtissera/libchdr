@@ -30,4 +30,17 @@
 #define LOWRAM_MAP_CHECKPOINT_STRIDE 512
 #endif
 
+/* Under LOWRAM_MAP, also replace each huffman_decoder's full 2^maxbits
+ * direct-lookup table (e.g. 128 KiB at maxbits=16, as used by AVHuff's
+ * Y/Cb/Cr contexts and the CHD huffman codec) with a two-level table: a
+ * 2^L1BITS first-level table, escaping to small per-prefix subtables only
+ * for the rare codes longer than L1BITS. Huffman assigns short codes to
+ * common symbols by construction, so the fast (non-escaping) path is
+ * unchanged; only long, rare codes pay an extra indirection. Total RAM
+ * drops to a few KiB per decoder regardless of maxbits.
+ */
+#ifndef LOWRAM_MAP_HUFFMAN_L1BITS
+#define LOWRAM_MAP_HUFFMAN_L1BITS 10
+#endif
+
 #endif

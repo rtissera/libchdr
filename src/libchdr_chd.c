@@ -238,6 +238,40 @@ struct _v5_map_window
 	uint32_t	checkpoint_idx;		/* which checkpoint this window covers; UINT32_MAX if none cached */
 };
 
+/* v5_map_get_entry() normally resumes from the nearest checkpoint on every
+ * call - O(stride/2) huffman+RLE work per lookup on average. For sequential
+ * access (the common case: playback reading hunk N, N+1, N+2, ...) that's
+ * wasted work, since the previous call already decoded up to hunknum-1 and
+ * left bs1/bs2 sitting exactly where hunknum's own decode needs to start.
+ * Caching that in-flight state turns the sequential case into O(1) per
+ * lookup instead. bs1/bs2's `read` pointers alias pass1_window/pass2_window
+ * - safe to cache as long as nothing reallocates those buffers in between,
+ * which holds precisely because this fast path never calls
+ * ensure_v5_map_window() itself (see v5_map_get_entry()). Fixed-size, no
+ * growth - a few dozen bytes, independent of file size or hunk count.
+ *
+ * `next_boundary` exists because pass1_window/pass2_window are each sized
+ * to exactly one checkpoint bucket's byte range - continuing to read past
+ * that range without refetching would silently read past bitstream->dlength
+ * (bitstream_peek's bounds check just stops supplying real bytes at that
+ * point, it doesn't error), corrupting the decode right at every bucket
+ * crossing. Forcing hunknum == next_boundary back onto the slow path -
+ * which correctly refetches both windows for the new bucket - is what
+ * keeps this fast path safe. */
+typedef struct _v5_resume_cache v5_resume_cache;
+struct _v5_resume_cache
+{
+	uint8_t				valid;			/* 0 until the first successful decode populates this */
+	uint32_t			cur_hunk;		/* next hunknum this state can resume into */
+	uint32_t			next_boundary;	/* first hunknum outside the current checkpoint bucket */
+	struct bitstream	bs1, bs2;
+	uint8_t				lastcomp;
+	int32_t				repcount;
+	uint64_t			curoffset;
+	uint32_t			last_self;
+	uint64_t			last_parent;
+};
+
 /* resident state for lazily re-deriving v5 map entries. Replaces the fully
  * materialized `header->rawmap` (totalhunks*12 bytes) with a sparse
  * checkpoint table plus, per lookup, a small on-demand window of the
@@ -257,6 +291,7 @@ struct _v5_lowram_map
 							 * a single fixed point for the whole file, not per-checkpoint */
 	v5_map_window			pass1_window;
 	v5_map_window			pass2_window;
+	v5_resume_cache			resume;			/* sequential-access fast path, see v5_resume_cache */
 };
 #endif
 
@@ -1330,7 +1365,7 @@ static chd_error v5_map_get_entry(chd_file *chd, uint32_t hunknum, uint8_t out[1
 	v5_lowram_map *lm = &chd->lowram_map;
 	chd_header *header = &chd->header;
 	struct bitstream bs1, bs2;
-	uint32_t cur_hunk;
+	uint32_t cur_hunk, start_hunk, next_boundary;
 	uint8_t lastcomp;
 	int32_t repcount;
 	uint64_t curoffset;
@@ -1351,43 +1386,66 @@ static chd_error v5_map_get_entry(chd_file *chd, uint32_t hunknum, uint8_t out[1
 	if (hunknum >= header->hunkcount || lm->checkpoint_count == 0)
 		return CHDERR_INVALID_PARAMETER;
 
-	/* checkpoints are hunknum-ascending; find the nearest one <= hunknum */
-	cpidx = 0;
-	for (i = 1; i < lm->checkpoint_count && lm->checkpoints[i].hunknum <= hunknum; i++)
-		cpidx = i;
-
+	if (lm->resume.valid && lm->resume.cur_hunk == hunknum && hunknum < lm->resume.next_boundary)
 	{
-		uint64_t pass1_start_bit = lm->checkpoints[cpidx].pass1_bitpos;
-		uint64_t pass1_end_bit = (cpidx + 1 < lm->checkpoint_count) ?
-			lm->checkpoints[cpidx + 1].pass1_bitpos : lm->pass1_end_bitpos;
-		uint64_t pass2_start_bit = lm->checkpoints[cpidx].pass2_bitpos;
-		uint64_t pass2_end_bit = (cpidx + 1 < lm->checkpoint_count) ?
-			lm->checkpoints[cpidx + 1].pass2_bitpos : (uint64_t)lm->mapbytes * 8;
-		chd_error werr;
+		/* fast path: the previous call already decoded up to hunknum-1 and
+		 * left this exact state ready to continue from hunknum - skip the
+		 * checkpoint lookup and window setup entirely. Safe to reuse
+		 * bs1/bs2 as-is: nothing reallocates pass1_window/pass2_window
+		 * between one call finishing and the next one starting, since this
+		 * path never calls ensure_v5_map_window(). */
+		bs1 = lm->resume.bs1;
+		bs2 = lm->resume.bs2;
+		lastcomp = lm->resume.lastcomp;
+		repcount = lm->resume.repcount;
+		curoffset = lm->resume.curoffset;
+		last_self = lm->resume.last_self;
+		last_parent = lm->resume.last_parent;
+		start_hunk = hunknum;
+		next_boundary = lm->resume.next_boundary;
+	}
+	else
+	{
+		/* checkpoints are hunknum-ascending; find the nearest one <= hunknum */
+		cpidx = 0;
+		for (i = 1; i < lm->checkpoint_count && lm->checkpoints[i].hunknum <= hunknum; i++)
+			cpidx = i;
 
-		if ((werr = ensure_v5_map_window(chd, &lm->pass1_window, pass1_start_bit / 8,
-				(pass1_end_bit + 7) / 8, cpidx)) != CHDERR_NONE)
-			return werr;
-		if ((werr = ensure_v5_map_window(chd, &lm->pass2_window, pass2_start_bit / 8,
-				(pass2_end_bit + 7) / 8, cpidx)) != CHDERR_NONE)
-			return werr;
+		{
+			uint64_t pass1_start_bit = lm->checkpoints[cpidx].pass1_bitpos;
+			uint64_t pass1_end_bit = (cpidx + 1 < lm->checkpoint_count) ?
+				lm->checkpoints[cpidx + 1].pass1_bitpos : lm->pass1_end_bitpos;
+			uint64_t pass2_start_bit = lm->checkpoints[cpidx].pass2_bitpos;
+			uint64_t pass2_end_bit = (cpidx + 1 < lm->checkpoint_count) ?
+				lm->checkpoints[cpidx + 1].pass2_bitpos : (uint64_t)lm->mapbytes * 8;
+			chd_error werr;
 
-		bs1.buffer = 0; bs1.bits = 0; bs1.read = lm->pass1_window.data; bs1.doffset = 0;
-		bs1.dlength = lm->pass1_window.byte_len;
-		bitstream_seek_bits(&bs1, pass1_start_bit - (uint64_t)lm->pass1_window.byte_start * 8);
+			if ((werr = ensure_v5_map_window(chd, &lm->pass1_window, pass1_start_bit / 8,
+					(pass1_end_bit + 7) / 8, cpidx)) != CHDERR_NONE)
+				return werr;
+			if ((werr = ensure_v5_map_window(chd, &lm->pass2_window, pass2_start_bit / 8,
+					(pass2_end_bit + 7) / 8, cpidx)) != CHDERR_NONE)
+				return werr;
 
-		bs2.buffer = 0; bs2.bits = 0; bs2.read = lm->pass2_window.data; bs2.doffset = 0;
-		bs2.dlength = lm->pass2_window.byte_len;
-		bitstream_seek_bits(&bs2, pass2_start_bit - (uint64_t)lm->pass2_window.byte_start * 8);
+			bs1.buffer = 0; bs1.bits = 0; bs1.read = lm->pass1_window.data; bs1.doffset = 0;
+			bs1.dlength = lm->pass1_window.byte_len;
+			bitstream_seek_bits(&bs1, pass1_start_bit - (uint64_t)lm->pass1_window.byte_start * 8);
+
+			bs2.buffer = 0; bs2.bits = 0; bs2.read = lm->pass2_window.data; bs2.doffset = 0;
+			bs2.dlength = lm->pass2_window.byte_len;
+			bitstream_seek_bits(&bs2, pass2_start_bit - (uint64_t)lm->pass2_window.byte_start * 8);
+		}
+
+		lastcomp = lm->checkpoints[cpidx].lastcomp;
+		repcount = lm->checkpoints[cpidx].repcount;
+		curoffset = lm->checkpoints[cpidx].curoffset;
+		last_self = lm->checkpoints[cpidx].last_self;
+		last_parent = lm->checkpoints[cpidx].last_parent;
+		start_hunk = lm->checkpoints[cpidx].hunknum;
+		next_boundary = (cpidx + 1 < lm->checkpoint_count) ? lm->checkpoints[cpidx + 1].hunknum : header->hunkcount;
 	}
 
-	lastcomp = lm->checkpoints[cpidx].lastcomp;
-	repcount = lm->checkpoints[cpidx].repcount;
-	curoffset = lm->checkpoints[cpidx].curoffset;
-	last_self = lm->checkpoints[cpidx].last_self;
-	last_parent = lm->checkpoints[cpidx].last_parent;
-
-	for (cur_hunk = lm->checkpoints[cpidx].hunknum; cur_hunk <= hunknum; cur_hunk++)
+	for (cur_hunk = start_hunk; cur_hunk <= hunknum; cur_hunk++)
 	{
 		uint8_t type;
 		uint64_t offset;
@@ -1468,6 +1526,20 @@ static chd_error v5_map_get_entry(chd_file *chd, uint32_t hunknum, uint8_t out[1
 			put_bigendian_uint16(&out[10], crc);
 		}
 	}
+
+	/* cache resumable state for a potential hunknum+1 fast-path call. Only
+	 * reached after a fully successful decode - any early error return
+	 * above leaves the previous cache entry untouched. */
+	lm->resume.valid = 1;
+	lm->resume.cur_hunk = hunknum + 1;
+	lm->resume.next_boundary = next_boundary;
+	lm->resume.bs1 = bs1;
+	lm->resume.bs2 = bs2;
+	lm->resume.lastcomp = lastcomp;
+	lm->resume.repcount = repcount;
+	lm->resume.curoffset = curoffset;
+	lm->resume.last_self = last_self;
+	lm->resume.last_parent = last_parent;
 
 	return CHDERR_NONE;
 }

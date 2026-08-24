@@ -206,11 +206,11 @@ struct _metadata_entry
 	uint8_t					flags;			/* flag bits */
 };
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 /* one v5-map checkpoint: everything needed to resume both decode passes
  * (pass 1: per-hunk compression-type byte, Huffman+RLE; pass 2: per-hunk
  * length/offset/crc, fixed-width fields) at hunk `hunknum` without having
- * decoded any of hunks [0, hunknum). See LOWRAM_MAP in chdconfig.h. */
+ * decoded any of hunks [0, hunknum). See LOWRAM_TARGET in chdconfig.h. */
 typedef struct _v5_map_checkpoint v5_map_checkpoint;
 struct _v5_map_checkpoint
 {
@@ -291,13 +291,13 @@ struct _chd_file
 
 	uint8_t *					file_cache;		/* cache of underlying file */
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 	v5_lowram_map				lowram_map;		/* CHDv5 compressed-map lazy-decode state */
 
 	/* CHDv5 can list up to 4 alternate codecs (header.compression[]); chdman
 	 * picks whichever compresses best per hunk, so a normal build must
 	 * init()/allocate all of them up front just in case a hunk needs one.
-	 * Under LOWRAM_MAP, codecintf[] is still resolved eagerly (cheap - just
+	 * Under LOWRAM_TARGET, codecintf[] is still resolved eagerly (cheap - just
 	 * matching a tag to a codec_interface pointer) but init() itself is
 	 * deferred to the first hunk_read_into_memory() call that actually needs
 	 * that slot - see ensure_codec_ready(). */
@@ -348,7 +348,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 /* internal map access */
 static chd_error map_read(chd_file *chd);
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 static chd_error map_read_one_legacy(chd_file *chd, uint32_t hunknum, map_entry *entry);
 static chd_error build_v5_map_checkpoints(chd_file *chd, chd_header *header, uint64_t file_base, uint64_t mapbytes,
 	uint64_t firstoffs, uint8_t lengthbits, uint8_t selfbits, uint8_t parentbits, uint16_t mapcrc);
@@ -669,7 +669,7 @@ static CHDR_INLINE int map_size_v5(chd_header* header, size_t *size)
 /*-------------------------------------------------
     crc16_update - calculate CRC16 (from
     hashing.cpp), continuing from a prior partial
-    result - lets LOWRAM_MAP verify the map CRC
+    result - lets LOWRAM_TARGET verify the map CRC
     across chunks without materializing the whole
     buffer at once
 -------------------------------------------------*/
@@ -740,7 +740,7 @@ static CHDR_INLINE int chd_compressed(chd_header* header) {
 
 static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 {
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 	uint32_t hunknum;
 	int repcount = 0;
 	uint8_t lastcomp = 0;
@@ -769,7 +769,7 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 		if ((header->mapoffset + rawmapsize) >= chd->file_size || (header->mapoffset + rawmapsize) < header->mapoffset)
 			return CHDERR_INVALID_FILE;
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		/* not entropy-coded - each entry is independently seekable, so there's
 		 * nothing to materialize. v5_map_get_entry() reads it lazily. */
 		return CHDERR_NONE;
@@ -797,7 +797,7 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	if ((header->mapoffset + mapbytes) < header->mapoffset || (header->mapoffset + mapbytes) >= chd->file_size)
 		return CHDERR_INVALID_FILE;
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 	/* build_v5_map_checkpoints() owns reading the compressed blob (in small
 	 * rolling chunks, not all mapbytes at once) and creating the huffman
 	 * decoder itself - nothing to set up here. */
@@ -957,14 +957,14 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 #endif
 }
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 /*-------------------------------------------------
     build_v5_map_checkpoints - run both v5 map
     decode passes once (same as decompress_v5_map's
-    non-LOWRAM_MAP path), but instead of writing a
+    non-LOWRAM_TARGET path), but instead of writing a
     12-byte entry per hunk into a fully materialized
     buffer, record a resumable checkpoint every
-    LOWRAM_MAP_CHECKPOINT_STRIDE hunks. Verifies the
+    LOWRAM_TARGET_CHECKPOINT_STRIDE hunks. Verifies the
     same map CRC as the normal path, computed
     incrementally instead of over one big buffer.
 
@@ -1067,7 +1067,7 @@ static chd_error build_v5_map_checkpoints(chd_file *chd, chd_header *header, uin
 	uint64_t pass1_symbols_start_bits;
 	chd_error err;
 
-	checkpoint_capacity = header->hunkcount / LOWRAM_MAP_CHECKPOINT_STRIDE + 1;
+	checkpoint_capacity = header->hunkcount / LOWRAM_TARGET_CHECKPOINT_STRIDE + 1;
 	checkpoints = (v5_map_checkpoint*)malloc(sizeof(v5_map_checkpoint) * checkpoint_capacity);
 	if (checkpoints == NULL)
 		return CHDERR_OUT_OF_MEMORY;
@@ -1095,7 +1095,7 @@ static chd_error build_v5_map_checkpoints(chd_file *chd, chd_header *header, uin
 	checkpoint_count = 0;
 	for (hunknum = 0; hunknum < header->hunkcount; hunknum++)
 	{
-		if (hunknum % LOWRAM_MAP_CHECKPOINT_STRIDE == 0)
+		if (hunknum % LOWRAM_TARGET_CHECKPOINT_STRIDE == 0)
 		{
 			checkpoints[checkpoint_count].hunknum = hunknum;
 			checkpoints[checkpoint_count].pass1_bitpos = v5_build_stream_position_bits(&pass1);
@@ -1169,7 +1169,7 @@ static chd_error build_v5_map_checkpoints(chd_file *chd, chd_header *header, uin
 		uint16_t crc = 0;
 		uint8_t entry[12];
 
-		if (hunknum % LOWRAM_MAP_CHECKPOINT_STRIDE == 0)
+		if (hunknum % LOWRAM_TARGET_CHECKPOINT_STRIDE == 0)
 		{
 			checkpoints[checkpoint_count].pass2_bitpos = v5_build_stream_position_bits(&pass2);
 			checkpoints[checkpoint_count].curoffset = curoffset;
@@ -1281,7 +1281,7 @@ static chd_error build_v5_map_checkpoints(chd_file *chd, chd_header *header, uin
     checkpoint `cpidx`. A no-op if it already does
     (the common case for sequential access - most
     lookups stay within the same checkpoint bucket,
-    up to LOWRAM_MAP_CHECKPOINT_STRIDE hunks); re-reads
+    up to LOWRAM_TARGET_CHECKPOINT_STRIDE hunks); re-reads
     just that small range from the file otherwise.
 -------------------------------------------------*/
 
@@ -1512,7 +1512,7 @@ static chd_error ensure_codec_ready(chd_file *chd, size_t slot, void *codec)
 	chd->codec_lazy_initialized[slot] = 1;
 	return CHDERR_NONE;
 }
-#endif /* LOWRAM_MAP */
+#endif /* LOWRAM_TARGET */
 
 /*-------------------------------------------------
     map_extract_old - extract a single map
@@ -1661,7 +1661,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	if (err != CHDERR_NONE)
 		EARLY_EXIT(err);
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 	/* grown on demand in hunk_read_compressed() instead of preallocated to
 	 * the worst case (header.hunkbytes) here - see compressed_capacity. */
 	newchd->compressed = NULL;
@@ -1700,7 +1700,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	else
 	{
 		size_t decompnum;
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 		int needsinit;
 #endif
 
@@ -1720,7 +1720,7 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 			if (newchd->codecintf[decompnum] == NULL && newchd->header.compression[decompnum] != 0)
 				EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
 
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 			/* ensure we don't try to initialize the same codec twice */
 			/* this is "normal" for chds where the user overrides the codecs, it'll have none repeated */
 			needsinit = (newchd->codecintf[decompnum]->init != NULL);
@@ -1951,7 +1951,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 
 			if (codec)
 			{
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 				/* never lazily init()ed (no hunk ever selected this slot) -
 				 * most codec free() implementations assume init() ran first */
 				if (chd->codec_lazy_initialized[i])
@@ -1964,7 +1964,7 @@ CHD_EXPORT void chd_close(chd_file *chd)
 		if (chd->header.rawmap != NULL)
 			free(chd->header.rawmap);
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		if (chd->lowram_map.pass1_window.data != NULL)
 			free(chd->lowram_map.pass1_window.data);
 		if (chd->lowram_map.pass2_window.data != NULL)
@@ -2488,7 +2488,7 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 		if (size > chd->header.hunkbytes)
 			return NULL;
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		/* grow the scratch buffer to fit this hunk's actual compressed
 		 * length instead of always carrying a hunkbytes-sized buffer (see
 		 * compressed_capacity). Monotonic: only grows, never shrinks, so a
@@ -2554,7 +2554,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 	if (chd->header.version < 5)
 	{
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		map_entry entry_storage;
 		map_entry *entry = &entry_storage;
 		if ((err = map_read_one_legacy(chd, hunknum, entry)) != CHDERR_NONE)
@@ -2624,7 +2624,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 #if VERIFY_BLOCK_CRC
 		uint16_t blockcrc;
 #endif
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		uint8_t rawmap_storage[12];
 		uint8_t *rawmap = rawmap_storage;
 		if ((err = v5_map_get_entry(chd, hunknum, rawmap)) != CHDERR_NONE)
@@ -2711,7 +2711,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				}
 				if (codec==NULL)
 					return CHDERR_CODEC_ERROR;
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 				if ((err = ensure_codec_ready(chd, rawmap[0], codec)) != CHDERR_NONE)
 					return err;
 #endif
@@ -2794,17 +2794,17 @@ static chd_error map_read(chd_file *chd)
 	uint8_t cookie[MAP_ENTRY_SIZE];
 	chd_error err;
 	uint32_t i;
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 	map_entry extracted[MAP_STACK_ENTRIES];
 #endif
 
 	/* legacy (v1-v4) map entries are fixed-size and independently seekable -
-	 * under LOWRAM_MAP, don't materialize the whole array, just validate it
+	 * under LOWRAM_TARGET, don't materialize the whole array, just validate it
 	 * (cookie + maxoffset, same as always) and re-read the single entry
 	 * needed on each hunk_read_into_memory() call instead. chd->map stays
 	 * NULL; hunknum*entrysize + chd->header.length recovers any entry's
 	 * file offset without storing anything. */
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 	chd->map = (map_entry *)malloc(sizeof(chd->map[0]) * chd->header.totalhunks);
 	if (!chd->map)
 		return CHDERR_OUT_OF_MEMORY;
@@ -2816,7 +2816,7 @@ static chd_error map_read(chd_file *chd)
 	{
 		/* compute how many entries this time */
 		int entries = chd->header.totalhunks - i, j;
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 		map_entry *dest = &chd->map[i];
 #else
 		map_entry *dest = extracted;
@@ -2858,7 +2858,7 @@ static chd_error map_read(chd_file *chd)
 	return CHDERR_NONE;
 
 cleanup:
-#if !LOWRAM_MAP
+#if !LOWRAM_TARGET
 	if (chd->map)
 		free(chd->map);
 	chd->map = NULL;
@@ -2866,7 +2866,7 @@ cleanup:
 	return err;
 }
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 /*-------------------------------------------------
     map_read_one_legacy - lazily fetch a single
     v1-v4 map entry directly from the file

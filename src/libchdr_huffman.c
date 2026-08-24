@@ -132,8 +132,8 @@ struct huffman_decoder* create_huffman_decoder(int numcodes, int maxbits)
 	decoder = (struct huffman_decoder*)malloc(sizeof(struct huffman_decoder));
 	decoder->numcodes = numcodes;
 	decoder->maxbits = maxbits;
-#if LOWRAM_MAP
-	decoder->l1bits = MIN(maxbits, LOWRAM_MAP_HUFFMAN_L1BITS);
+#if LOWRAM_TARGET
+	decoder->l1bits = MIN(maxbits, LOWRAM_TARGET_HUFFMAN_L1BITS);
 	decoder->lookup = (lookup_value*)malloc(sizeof(lookup_value) * (1u << decoder->l1bits));
 	decoder->subtable = NULL;
 	decoder->subtable_count = 0;
@@ -153,7 +153,7 @@ void delete_huffman_decoder(struct huffman_decoder* decoder)
 	{
 		if (decoder->lookup != NULL)
 			free(decoder->lookup);
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 		if (decoder->subtable != NULL)
 			free(decoder->subtable);
 #endif
@@ -175,7 +175,7 @@ uint32_t huffman_decode_one(struct huffman_decoder* decoder, struct bitstream* b
 	uint32_t window = bitstream_peek(bitbuf, decoder->maxbits);
 	lookup_value lookup;
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 	/* two-level lookup: common (short-code) case is one table load, same as
 	 * the full-table path below; only codes longer than l1bits pay for a
 	 * second indirection into a small per-prefix subtable. */
@@ -562,7 +562,7 @@ enum huffman_error huffman_assign_canonical_codes(struct huffman_decoder* decode
  *-------------------------------------------------
  */
 
-#if LOWRAM_MAP
+#if LOWRAM_TARGET
 enum huffman_error huffman_build_lookup_table(struct huffman_decoder* decoder)
 {
 	uint32_t l1bits = decoder->l1bits;

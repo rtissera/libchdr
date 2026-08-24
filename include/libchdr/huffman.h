@@ -61,11 +61,11 @@ struct huffman_decoder
 	uint8_t 			prevdata;             /* value of the previous data (for delta-RLE encoding) */
 	int             	rleremaining;         /* number of RLE bytes remaining (for delta-RLE encoding) */
 	lookup_value *  	lookup;               /* pointer to the lookup table (full 2^maxbits table,
-	                                             or under LOWRAM_MAP, the 2^l1bits first-level table) */
+	                                             or under LOWRAM_TARGET, the 2^l1bits first-level table) */
 	struct node_t *     huffnode;             /* array of nodes */
 	uint32_t *      	datahisto;            /* histogram of data values */
-#if LOWRAM_MAP
-	uint8_t				l1bits;               /* first-level table width in bits, MIN(maxbits, LOWRAM_MAP_HUFFMAN_L1BITS) */
+#if LOWRAM_TARGET
+	uint8_t				l1bits;               /* first-level table width in bits, MIN(maxbits, LOWRAM_TARGET_HUFFMAN_L1BITS) */
 	lookup_value *		subtable;             /* concatenated second-level subtables, one per escaping first-level prefix */
 	uint32_t			subtable_count;       /* number of subtables currently allocated */
 #endif

@@ -1,6 +1,13 @@
 add_executable(chdr-benchmark benchmark.c)
 target_link_libraries(chdr-benchmark PRIVATE chdr-static)
 
+# reads a CHD's hunks in a given order and dumps them to stdout, so two
+# builds (e.g. LOWRAM_TARGET on vs off) can be diffed byte-for-byte instead
+# of only relying on the internal per-hunk CRC check - see
+# lowram-correctness.yml
+add_executable(chd_dump_order chd_dump_order.c)
+target_link_libraries(chd_dump_order PRIVATE chdr-static)
+
 # fuzzing
 if(BUILD_FUZZER)
   add_executable(chdr-fuzz fuzz.c)

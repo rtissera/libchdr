@@ -1,0 +1,61 @@
+name: LOWRAM_TARGET correctness
+
+# Builds libchdr twice (default config and CHDR_LOWRAM_TARGET=ON) and diffs
+# decoded output byte-for-byte across the full corpus in several read
+# orders, instead of only relying on the internal per-hunk CRC check.
+#
+# This exists because of a real bug: LOWRAM_TARGET's sequential resume-cache
+# (v5_map_get_entry's fast path) silently corrupted the decode at every
+# LOWRAM_TARGET_CHECKPOINT_STRIDE checkpoint boundary until a next_boundary
+# check was added. The existing synthetic corpus is too small to ever cross
+# a stride-2048 boundary, so it did not catch this - only a manual sweep
+# against large real-world CHDs did. tests/corpus/generate.sh's
+# raw_boundary.chd (2,200 hunks of 64 B, deliberately crossing the default
+# stride) closes that gap; this workflow is what actually runs it on every
+# push/PR.
+
+on: [push, pull_request]
+
+jobs:
+  lowram-correctness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install chdman
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mame-tools
+
+      - name: Generate corpus seeds
+        run: tests/corpus/generate.sh
+
+      - name: Build (default config)
+        run: |
+          cmake -B build-default -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-default --target chd_dump_order -j$(nproc)
+
+      - name: Build (CHDR_LOWRAM_TARGET=ON)
+        run: |
+          cmake -B build-lowram -DCMAKE_BUILD_TYPE=Release -DCHDR_LOWRAM_TARGET=ON
+          cmake --build build-lowram --target chd_dump_order -j$(nproc)
+
+      - name: Byte-identical decode, every seed x every read order
+        run: |
+          set -euo pipefail
+          D=build-default/tests/chd_dump_order
+          L=build-lowram/tests/chd_dump_order
+          fail=0
+          total=0
+          for f in tests/corpus/seeds/*.chd; do
+            for order in sequential reverse random:1 random:42; do
+              total=$((total+1))
+              "$D" "$f" "$order" > /tmp/d.bin
+              "$L" "$f" "$order" > /tmp/l.bin
+              if ! cmp -s /tmp/d.bin /tmp/l.bin; then
+                echo "MISMATCH: $(basename "$f") $order"
+                fail=$((fail+1))
+              fi
+            done
+          done
+          echo "$total checks, $fail mismatches"
+          [ "$fail" -eq 0 ]

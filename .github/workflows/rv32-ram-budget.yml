@@ -11,16 +11,16 @@ name: RV32 RAM budget
 # saves another ~3% via cross-TU dead-code elimination - both measured and
 # CRC-verified correct under qemu-system-riscv32.
 #
-# Also builds with CHDR_LOWRAM_MAP=ON: replaces the fully-materialized
+# Also builds with CHDR_LOWRAM_TARGET=ON: replaces the fully-materialized
 # per-hunk map (12B/hunk for CHDv5, ~24B/hunk legacy - scales with total
 # hunk count, independent of codec/hunkbytes) with a checkpointed on-demand
 # decode. Barely visible on this workflow's tiny synthetic corpus (few
 # hunks/file), but on real full-size discs it's the dominant RAM cost -
 # measured 48-74% peak-heap reduction on real GD-ROM/UMD CHDs (naomi,
-# dreamcast, psp), CRC-verified byte-identical against the non-LOWRAM_MAP
+# dreamcast, psp), CRC-verified byte-identical against the non-LOWRAM_TARGET
 # build across sequential/reverse/random-order reads. Real-ROM validation
 # isn't reproducible in CI (copyrighted files), so this workflow's job is
-# proving LOWRAM_MAP=ON doesn't regress correctness or blow past budget on
+# proving LOWRAM_TARGET=ON doesn't regress correctness or blow past budget on
 # what CI *can* see - the real-file numbers were measured locally.
 
 on: [push, pull_request]
@@ -44,7 +44,7 @@ jobs:
           cmake -B build-rv32
           -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/cmake/toolchain-rv32imafc.cmake
           -DBUILD_SHARED_LIBS=OFF -DINSTALL_STATIC_LIBS=OFF
-          -DCMAKE_BUILD_TYPE=MinSizeRel -DCHDR_LOWRAM_MAP=ON
+          -DCMAKE_BUILD_TYPE=MinSizeRel -DCHDR_LOWRAM_TARGET=ON
 
       - name: Build chdr-static
         run: cmake --build build-rv32 --target chdr-static -j$(nproc)

@@ -33,6 +33,15 @@ EOF
 RAW="$TMP/tiny.raw"
 dd if=/dev/urandom of="$RAW" bs=4096 count=16 status=none
 
+# Raw for a small-hunk, many-hunk file - 2,200 hunks of 64 B (140,800 B
+# total) specifically to cross LOWRAM_TARGET_CHECKPOINT_STRIDE's default
+# 2048-hunk checkpoint boundary. LOWRAM_TARGET's sequential resume-cache
+# only exercises its bucket-boundary handling when a real checkpoint
+# crossing happens mid-file - every other seed here is too small to ever
+# hit one. See lowram-correctness.yml.
+RAW_BOUNDARY="$TMP/boundary.raw"
+dd if=/dev/urandom of="$RAW_BOUNDARY" bs=64 count=2200 status=none
+
 create_hd () {
     local name="$1"; shift
     chdman createhd -f -o "$CORPUS/$name" -i "$RAW_HD" --chs 4,16,2 -ss 512 "$@" >/dev/null 2>&1 || true
@@ -46,6 +55,11 @@ create_cd () {
 create_raw () {
     local name="$1"; shift
     chdman createraw -f -o "$CORPUS/$name" -i "$RAW" -hs 4096 -us 512 "$@" >/dev/null 2>&1 || true
+}
+
+create_raw_boundary () {
+    local name="$1"; shift
+    chdman createraw -f -o "$CORPUS/$name" -i "$RAW_BOUNDARY" -hs 64 -us 64 "$@" >/dev/null 2>&1 || true
 }
 
 # Hard disk: default codecs + flavor variants.
@@ -69,6 +83,9 @@ create_cd cd_cdzs.chd       -c cdzs
 create_raw raw_default.chd
 create_raw raw_none.chd     -c none
 create_raw raw_zstd.chd     -c zstd
+
+# Raw, many small hunks - crosses a LOWRAM_TARGET checkpoint boundary.
+create_raw_boundary raw_boundary.chd -c zstd
 
 # Summary.
 echo "generated $(ls -1 "$CORPUS"/*.chd 2>/dev/null | wc -l) CHD samples:"

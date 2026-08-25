@@ -11,7 +11,7 @@ option(WITH_SYSTEM_ZSTD "Use system provided zstd library" OFF)
 option(CHDR_WANT_RAW_DATA_SECTOR "Output ECC data and sync header" ON)
 option(CHDR_WANT_SUBCODE "Output CD subchannel data" ON)
 option(CHDR_VERIFY_BLOCK_CRC "Verify integrity of decoded data" ON)
-option(CHDR_LOWRAM_MAP "Trade CPU for RAM on the per-hunk map (checkpointed on-demand decode instead of fully materializing it at chd_open) - for memory-constrained targets" OFF)
+option(CHDR_LOWRAM_TARGET "Trade CPU for RAM on the per-hunk map (checkpointed on-demand decode instead of fully materializing it at chd_open) - for memory-constrained targets" OFF)
 option(CHDR_WANT_TESTS "Build tests for the library" ON)
 
 option(BUILD_LTO "Compile libchdr with link-time optimization if supported" OFF)
@@ -93,10 +93,10 @@ else()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)
 endif()
 
-if(CHDR_LOWRAM_MAP)
-  list(APPEND CHDR_DEFINES LOWRAM_MAP=1)
+if(CHDR_LOWRAM_TARGET)
+  list(APPEND CHDR_DEFINES LOWRAM_TARGET=1)
 else()
-  list(APPEND CHDR_DEFINES LOWRAM_MAP=0)
+  list(APPEND CHDR_DEFINES LOWRAM_TARGET=0)
 endif()
 
 #--------------------------------------------------

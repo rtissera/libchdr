@@ -52,7 +52,7 @@ uint32_t bitstream_peek(struct bitstream* bitstream, int numbits)
 		while (bitstream->bits <= 24)
 		{
 			if (bitstream->doffset < bitstream->dlength)
-				bitstream->buffer |= bitstream->read[bitstream->doffset] << (24 - bitstream->bits);
+				bitstream->buffer |= (uint32_t)bitstream->read[bitstream->doffset] << (24 - bitstream->bits);
 			bitstream->doffset++;
 			bitstream->bits += 8;
 		}

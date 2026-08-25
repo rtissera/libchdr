@@ -1,0 +1,92 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8e7d0fe..b748fb3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -26,11 +26,26 @@ elseif(TANG_BOARD STREQUAL "nano20k")
+     add_definitions(-DTANG_NANO20K)
+ endif()
+ 
++# libchdr: LOWRAM_TARGET on (real ~365KB free SRAM budget on this board, see
++# project memory - whole-hunk decode does not fit, streaming-decode design does)
++add_definitions(
++    -DLOWRAM_TARGET=1
++    -DWANT_RAW_DATA_SECTOR=1
++    -DWANT_SUBCODE=1
++    -DVERIFY_BLOCK_CRC=1
++    -DMINIZ_NO_ARCHIVE_APIS
++    -DMINIZ_NO_DEFLATE_APIS
++    -DMINIZ_NO_STDIO
++    -DMINIZ_NO_TIME
++)
++
+ find_package(bouffalo_sdk REQUIRED HINTS $ENV{BL_SDK_BASE})
+ 
+ # Add include directories
+ sdk_add_include_directories(
+-    . usb fpga ui core utils
++    . usb fpga ui core utils chd
++    thirdparty/libchdr/include
++    thirdparty/libchdr/src
+ )
+ 
+ # Add source files
+@@ -42,7 +57,15 @@ file(GLOB_RECURSE MY_SOURCES
+     "utils/*.cpp"
+ )
+ 
+-target_sources(app PRIVATE ${MY_SOURCES})
++file(GLOB LIBCHDR_SOURCES
++    "chd/*.c"
++    "thirdparty/libchdr/src/*.c"
++    "thirdparty/libchdr/deps/lzma-26.02/src/LzmaDec.c"
++    "thirdparty/libchdr/deps/miniz-3.1.2/miniz.c"
++    "thirdparty/libchdr/deps/zstd-1.5.7/zstddeclib.c"
++)
++
++target_sources(app PRIVATE ${MY_SOURCES} ${LIBCHDR_SOURCES})
+ sdk_set_main_file(main.cpp)
+ 
+ project(tangcore CXX)
+diff --git a/main.cpp b/main.cpp
+index e349734..c24c645 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -31,6 +31,7 @@ extern "C" {
+ #include "utils.h"
+ #include "cores.h"
+ #include "overlay.h"
++#include "chd_fatfs.h"
+ #include "init.h"
+ #include "menu_manager.h"
+ 
+@@ -554,6 +555,21 @@ static void print_system_info(void) {
+ }
+ 
+ // Initialize things, then start main_task and uart1_rx_task to do actual work
++// TEMPORARY link-verification probe: forces the linker to fully pull in and
++// resolve libchdr against this toolchain/libc (LOWRAM_TARGET codec paths
++// included). Not a real feature - no SD card is mounted yet at this point in
++// boot, so this always fails to open and returns cleanly. Remove once real
++// CHD loading is wired into a core loader.
++static void chd_link_probe(void)
++{
++    FIL fil;
++    chd_file *chd = NULL;
++    chd_error err = chd_fatfs_open("sd:/__chd_link_probe__.chd", &fil, &chd);
++    DEBUG("chd_link_probe: chd_fatfs_open -> %d\n", (int)err);
++    if (chd)
++        chd_close(chd);
++}
++
+ int main(void)
+ {
+     /* Board init */
+@@ -565,6 +581,8 @@ int main(void)
+ 
+     print_system_info();
+ 
++    chd_link_probe();
++
+     // Create mutex for joypad states
+     state_mutex = xSemaphoreCreateMutex();
+ 

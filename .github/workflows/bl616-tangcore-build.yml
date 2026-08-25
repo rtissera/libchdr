@@ -1,0 +1,97 @@
+name: BL616 TangCore build
+
+# Compile+link smoke test: proves libchdr keeps building against the real
+# firmware running on Sipeed Tang Console 60K / Primer 25K's onboard BL616
+# companion MCU (nand2mario/tangcore, nand2mario/firmware-bl616), using the
+# real Xuantie/T-Head toolchain and nand2mario's real bouffalo_sdk fork -
+# not the vanilla riscv64-unknown-elf-gcc proxy used by rv32-ram-budget.yml.
+#
+# No BL616 hardware in CI, so this cannot prove chd_open()/chd_read() work
+# at runtime - only that the real toolchain/SDK/firmware combination still
+# compiles and fully links libchdr in. See contrib/tangcore-bl616/README.md.
+#
+# Clones fixed commits of firmware-bl616/bouffalo_sdk/toolchain, not branch
+# heads - those are nand2mario's repos, not ours, so pinning keeps this job
+# from going red over changes we didn't make. Bump the SHAs in this file and
+# in contrib/tangcore-bl616/README.md together when picking up upstream
+# changes is wanted.
+
+on: [push, pull_request]
+
+env:
+  TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
+  BOUFFALO_SDK_SHA: 7f44f9ea6b4ccf96db8c5236c8024b68e2a76df7
+  FIRMWARE_BL616_SHA: a5a6ea1cf7c81f32c1c3f0f91ea9d913be5ba078
+
+jobs:
+  bl616-tangcore-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only the two big, unmodified-by-us clones are cached. firmware-bl616
+      # itself is tiny (~260KB) and gets patched+vendored in place every run
+      # - caching it would either replay the patch onto an already-patched
+      # tree (fails) or freeze a stale libchdr copy into the cache instead of
+      # testing the current checkout, so it's always cloned fresh.
+      - name: Cache toolchain/SDK clones
+        id: cache-tangcore
+        uses: actions/cache@v4
+        with:
+          path: |
+            tangcore-work/toolchain_gcc_t-head_linux
+            tangcore-work/bouffalo_sdk
+          key: tangcore-toolchain-sdk-${{ env.TOOLCHAIN_SHA }}-${{ env.BOUFFALO_SDK_SHA }}
+
+      - name: Clone toolchain + SDK (pinned commits)
+        if: steps.cache-tangcore.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p tangcore-work
+          cd tangcore-work
+
+          git init -q toolchain_gcc_t-head_linux
+          git -C toolchain_gcc_t-head_linux remote add origin https://github.com/bouffalolab/toolchain_gcc_t-head_linux.git
+          git -C toolchain_gcc_t-head_linux fetch --depth 1 origin "$TOOLCHAIN_SHA"
+          git -C toolchain_gcc_t-head_linux checkout -q FETCH_HEAD
+
+          git init -q bouffalo_sdk
+          git -C bouffalo_sdk remote add origin https://github.com/nand2mario/bouffalo_sdk.git
+          git -C bouffalo_sdk fetch --depth 1 origin "$BOUFFALO_SDK_SHA"
+          git -C bouffalo_sdk checkout -q FETCH_HEAD
+          git -C bouffalo_sdk submodule update --init --recursive --depth 1
+
+      - name: Clone firmware-bl616 (pinned commit, always fresh)
+        run: |
+          set -euo pipefail
+          cd tangcore-work
+          rm -rf firmware-bl616
+          git init -q firmware-bl616
+          git -C firmware-bl616 remote add origin https://github.com/nand2mario/firmware-bl616.git
+          git -C firmware-bl616 fetch --depth 1 origin "$FIRMWARE_BL616_SHA"
+          git -C firmware-bl616 checkout -q FETCH_HEAD
+
+      - name: Apply integration patch + vendor libchdr into firmware-bl616
+        run: |
+          set -euo pipefail
+          F=tangcore-work/firmware-bl616
+
+          git -C "$F" apply "${{ github.workspace }}/contrib/tangcore-bl616/patches/firmware-bl616-libchdr-integration.patch"
+
+          mkdir -p "$F/thirdparty/libchdr"
+          cp -r include src "$F/thirdparty/libchdr/"
+          mkdir -p "$F/thirdparty/libchdr/deps"
+          cp -r deps/lzma-26.02 deps/miniz-3.1.2 deps/zstd-1.5.7 "$F/thirdparty/libchdr/deps/"
+
+          mkdir -p "$F/chd"
+          cp contrib/tangcore-bl616/chd/chd_fatfs.h contrib/tangcore-bl616/chd/chd_fatfs.c "$F/chd/"
+
+      - name: Build (TANG_BOARD=console60k)
+        run: |
+          export PATH="${{ github.workspace }}/tangcore-work/toolchain_gcc_t-head_linux/bin:$PATH"
+          riscv64-unknown-elf-gcc --version
+          cd tangcore-work/firmware-bl616
+          make 2>&1 | tee build.log
+          echo "---- memory region summary ----"
+          grep -A 7 "Memory region" build.log

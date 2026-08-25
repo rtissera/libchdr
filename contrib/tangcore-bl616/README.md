@@ -11,26 +11,54 @@ does prove: libchdr keeps building cleanly against the real Xuantie/T-Head
 toolchain and nand2mario's real bouffalo_sdk fork, on every libchdr change.
 See `.github/workflows/bl616-tangcore-build.yml`.
 
+## Licensing - what's ours, what's theirs
+
+libchdr is BSD-3-Clause (`LICENSE.txt`). `firmware-bl616` and `bouffalo_sdk`
+are nand2mario's own repos, Apache License 2.0. Nothing here changes
+libchdr's own license - same model as `deps/` (each vendored third party
+keeps its own license, separate from libchdr's top-level one) - but it's
+worth being explicit since this directory touches someone else's project
+directly:
+
+- **`chd/chd_fatfs.{h,c}`** - 100% original code, not derived from any
+  third-party source. BSD-3-Clause, same as the rest of libchdr (see the
+  file headers).
+- **`patches/firmware-bl616-libchdr-integration.patch`** - a small (92-line)
+  unified diff against nand2mario's actual `CMakeLists.txt` and `main.cpp`
+  from `firmware-bl616` (Apache-2.0, © nand2mario). **This directory does
+  NOT contain copies of his files** - only the diff, applied at build time
+  in CI (`git apply`) against a freshly-cloned, pinned commit. This is
+  deliberate: a patch is the standard, minimal way to distribute a
+  modification to someone else's code without redistributing the whole
+  file, and it keeps this repo from carrying content that isn't ours.
+  Applying the patch reproduces two files that remain Apache-2.0/©
+  nand2mario, modified - not BSD-3-Clause libchdr content. Nothing under
+  `contrib/` is compiled into libchdr itself, so none of this reaches
+  libchdr's own build artifacts (`libchdr.so`/`chdr-static.a`).
+
 ## Contents
 
 - `chd/chd_fatfs.{h,c}` - a `core_file_callbacks` implementation backed by
   FatFS (`f_open`/`f_read`/`f_lseek`/`f_close`), the bridge libchdr needs to
   open a CHD from an SD card or USB drive under this firmware.
-- `firmware-overlay/{CMakeLists.txt,main.cpp}` - full copies of
-  `firmware-bl616`'s own files, modified to vendor libchdr in and add a
-  `chd_link_probe()` call. The probe is deliberately not a no-op: an
-  unreferenced library builds and links "clean" by silently getting
-  dead-stripped, which proved nothing the first time this was tried. The
-  probe calls `chd_fatfs_open()` on a path that doesn't exist (safe - no SD
-  is mounted yet at that point in `main()`), forcing the linker to fully
-  resolve libchdr against this toolchain's libc.
+- `patches/firmware-bl616-libchdr-integration.patch` - modifies
+  `firmware-bl616`'s `CMakeLists.txt` (vendors libchdr in, sets
+  `LOWRAM_TARGET=1`) and `main.cpp` (adds a `chd_link_probe()` call). The
+  probe is deliberately not a no-op: an unreferenced library builds and
+  links "clean" by silently getting dead-stripped, which proved nothing the
+  first time this was tried locally. The probe calls `chd_fatfs_open()` on
+  a path that doesn't exist (safe - no SD is mounted yet at that point in
+  `main()`), forcing the linker to fully resolve libchdr against this
+  toolchain's libc.
 
 ## Pinned versions
 
 CI clones fixed commits, not branch heads - `firmware-bl616` and
 `bouffalo_sdk` are nand2mario's own repos we don't control, so pinning keeps
 libchdr's CI from going red over changes we didn't make. Bump these
-manually when picking up upstream changes is actually wanted.
+manually when picking up upstream changes is actually wanted (the patch
+above may need regenerating if `firmware-bl616`'s `CMakeLists.txt`/
+`main.cpp` have since diverged).
 
 | repo | commit |
 |---|---|
@@ -48,17 +76,18 @@ git clone https://github.com/nand2mario/firmware-bl616.git
 
 export PATH="$PWD/toolchain_gcc_t-head_linux/bin:$PATH"
 
-mkdir -p firmware-bl616/thirdparty/libchdr
-cp -r /path/to/libchdr/include /path/to/libchdr/src firmware-bl616/thirdparty/libchdr/
-mkdir -p firmware-bl616/thirdparty/libchdr/deps
-cp -r /path/to/libchdr/deps/lzma-26.02 /path/to/libchdr/deps/miniz-3.1.2 /path/to/libchdr/deps/zstd-1.5.7 \
-    firmware-bl616/thirdparty/libchdr/deps/
-
-cp /path/to/libchdr/contrib/tangcore-bl616/chd/*.{h,c} firmware-bl616/chd/
-cp /path/to/libchdr/contrib/tangcore-bl616/firmware-overlay/CMakeLists.txt firmware-bl616/CMakeLists.txt
-cp /path/to/libchdr/contrib/tangcore-bl616/firmware-overlay/main.cpp firmware-bl616/main.cpp
-
 cd firmware-bl616
+git apply /path/to/libchdr/contrib/tangcore-bl616/patches/firmware-bl616-libchdr-integration.patch
+
+mkdir -p thirdparty/libchdr
+cp -r /path/to/libchdr/include /path/to/libchdr/src thirdparty/libchdr/
+mkdir -p thirdparty/libchdr/deps
+cp -r /path/to/libchdr/deps/lzma-26.02 /path/to/libchdr/deps/miniz-3.1.2 /path/to/libchdr/deps/zstd-1.5.7 \
+    thirdparty/libchdr/deps/
+
+mkdir -p chd
+cp /path/to/libchdr/contrib/tangcore-bl616/chd/*.{h,c} chd/
+
 make  # BL_SDK_BASE defaults to ../bouffalo_sdk, TANG_BOARD defaults to console60k
 ```
 

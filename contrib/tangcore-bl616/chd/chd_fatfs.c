@@ -1,3 +1,11 @@
+/* license:BSD-3-Clause
+ * copyright-holders:Romain Tisserand
+ *
+ * chd_fatfs.c
+ *
+ * See chd_fatfs.h. Original code, not derived from any third-party source.
+ */
+
 #include "chd_fatfs.h"
 
 #include <stdio.h> /* SEEK_SET / SEEK_CUR / SEEK_END */

@@ -1,3 +1,14 @@
+/* license:BSD-3-Clause
+ * copyright-holders:Romain Tisserand
+ *
+ * chd_fatfs.h
+ *
+ * Bridges libchdr's core_file_callbacks onto FatFS, for firmware targets
+ * (e.g. nand2mario/firmware-bl616) that access CHD files through a FatFS
+ * volume instead of a hosted libc filesystem. Original code, not derived
+ * from any third-party source.
+ */
+
 #pragma once
 
 #include "ff.h"

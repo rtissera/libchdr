@@ -30,14 +30,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cache toolchain/SDK/firmware clones
+      # Only the two big, unmodified-by-us clones are cached. firmware-bl616
+      # itself is tiny (~260KB) and gets patched+vendored in place every run
+      # - caching it would either replay the patch onto an already-patched
+      # tree (fails) or freeze a stale libchdr copy into the cache instead of
+      # testing the current checkout, so it's always cloned fresh.
+      - name: Cache toolchain/SDK clones
         id: cache-tangcore
         uses: actions/cache@v4
         with:
-          path: tangcore-work
-          key: tangcore-work-${{ env.TOOLCHAIN_SHA }}-${{ env.BOUFFALO_SDK_SHA }}-${{ env.FIRMWARE_BL616_SHA }}
+          path: |
+            tangcore-work/toolchain_gcc_t-head_linux
+            tangcore-work/bouffalo_sdk
+          key: tangcore-toolchain-sdk-${{ env.TOOLCHAIN_SHA }}-${{ env.BOUFFALO_SDK_SHA }}
 
-      - name: Clone toolchain, SDK, firmware (pinned commits)
+      - name: Clone toolchain + SDK (pinned commits)
         if: steps.cache-tangcore.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -55,15 +62,22 @@ jobs:
           git -C bouffalo_sdk checkout -q FETCH_HEAD
           git -C bouffalo_sdk submodule update --init --recursive --depth 1
 
+      - name: Clone firmware-bl616 (pinned commit, always fresh)
+        run: |
+          set -euo pipefail
+          cd tangcore-work
+          rm -rf firmware-bl616
           git init -q firmware-bl616
           git -C firmware-bl616 remote add origin https://github.com/nand2mario/firmware-bl616.git
           git -C firmware-bl616 fetch --depth 1 origin "$FIRMWARE_BL616_SHA"
           git -C firmware-bl616 checkout -q FETCH_HEAD
 
-      - name: Vendor libchdr into firmware-bl616
+      - name: Apply integration patch + vendor libchdr into firmware-bl616
         run: |
           set -euo pipefail
           F=tangcore-work/firmware-bl616
+
+          git -C "$F" apply "${{ github.workspace }}/contrib/tangcore-bl616/patches/firmware-bl616-libchdr-integration.patch"
 
           mkdir -p "$F/thirdparty/libchdr"
           cp -r include src "$F/thirdparty/libchdr/"
@@ -72,8 +86,6 @@ jobs:
 
           mkdir -p "$F/chd"
           cp contrib/tangcore-bl616/chd/chd_fatfs.h contrib/tangcore-bl616/chd/chd_fatfs.c "$F/chd/"
-          cp contrib/tangcore-bl616/firmware-overlay/CMakeLists.txt "$F/CMakeLists.txt"
-          cp contrib/tangcore-bl616/firmware-overlay/main.cpp "$F/main.cpp"
 
       - name: Build (TANG_BOARD=console60k)
         run: |

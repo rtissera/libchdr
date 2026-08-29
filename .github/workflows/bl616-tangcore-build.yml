@@ -37,7 +37,7 @@ jobs:
       # testing the current checkout, so it's always cloned fresh.
       - name: Cache toolchain/SDK clones
         id: cache-tangcore
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             tangcore-work/toolchain_gcc_t-head_linux

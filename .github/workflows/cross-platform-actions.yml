@@ -22,7 +22,7 @@ jobs:
               sudo pkg upgrade -y
               sudo pkg install -y cmake ninja
           - operating_system: haiku
-            version: 'r1beta5'
+            version: 'r1beta6'
             pkginstall: |
               pkgman update -y
               pkgman install -y cmake ninja
@@ -69,10 +69,6 @@ jobs:
       - name: Set up build environment
         run: ${{ matrix.pkginstall }}
         shell: cpa.sh {0}
-
-      - name: Reboot VM
-        run: cpa.sh --reboot
-        if: matrix.operating_system == 'haiku'
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja

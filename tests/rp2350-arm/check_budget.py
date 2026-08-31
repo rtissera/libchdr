@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce a per-codec RAM budget against tests/rp2350/fw.c's qemu output.
+"""Enforce a per-codec RAM budget against tests/rp2350-arm/fw.c's qemu output.
 
 Usage: check_budget.py <log-file>
 

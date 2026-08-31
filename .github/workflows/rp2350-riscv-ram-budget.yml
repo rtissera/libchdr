@@ -1,0 +1,71 @@
+name: RP2350 (RISC-V) RAM budget
+
+# Cross-compiles libchdr for rv32imac/ilp32 soft-float (the Raspberry Pi
+# RP2350's Hazard3 RISC-V core mode - dual Hazard3 @150MHz, 520KB SRAM,
+# RV32IMAC_Zicsr_Zifencei with no F/D extension - the RP2350's alternative
+# to its Cortex-M33 pair, see rp2350-arm-ram-budget.yml; the two boot as
+# alternatives, not concurrently) and runs the same peak-heap-per-codec
+# probe as rv32-ram-budget.yml/rp2350-arm-ram-budget.yml under
+# qemu-system-riscv32. This one exists because Hazard3 has no hardware FPU -
+# soft-float ilp32 is a different ABI from every other RV32 target in this
+# repo (BL616/ESP32-P4's hard-float rv32imafc/ilp32f), so those numbers
+# don't stand in for it. See cmake/toolchain-hazard3.cmake for why the
+# vendor extensions are dropped.
+#
+# Runs on qemu-system-riscv32's generic "virt" machine, not a real Hazard3
+# core - same caveat as rv32-ram-budget.yml: only the ISA/ABI and heap
+# high-water numbers matter here, not the peripherals.
+#
+# Built with -Os -flto and CHDR_LOWRAM_TARGET=ON, same rationale as
+# rv32-ram-budget.yml.
+
+on: [push, pull_request]
+
+jobs:
+  rp2350-riscv-ram-budget:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install RV32 toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf \
+            binutils-riscv64-unknown-elf qemu-system-misc mame-tools
+
+      - name: Configure (rv32imac/ilp32, Hazard3)
+        run: >
+          cmake -B build-hazard3
+          -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/cmake/toolchain-hazard3.cmake
+          -DBUILD_SHARED_LIBS=OFF -DINSTALL_STATIC_LIBS=OFF
+          -DCMAKE_BUILD_TYPE=MinSizeRel -DCHDR_LOWRAM_TARGET=ON -DCHDR_WANT_TESTS=OFF
+
+      - name: Build chdr-static
+        run: cmake --build build-hazard3 --target chdr-static -j$(nproc)
+
+      - name: Generate corpus seeds (chdman)
+        run: tests/corpus/generate.sh
+
+      - name: Generate embedded corpus headers
+        run: tests/rp2350-riscv/gen_embed.sh
+
+      - name: Build RAM-budget firmware
+        run: |
+          riscv64-unknown-elf-gcc -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+            --specs=picolibc.specs --crt0=semihost --oslib=semihost \
+            -I include -I tests/rp2350-riscv -Os -flto \
+            -Wl,--wrap=malloc -Wl,--wrap=free -Wl,--wrap=realloc -Wl,--wrap=calloc \
+            -o tests/rp2350-riscv/fw.elf tests/rp2350-riscv/fw.c \
+            build-hazard3/libchdr-static.a \
+            build-hazard3/deps/lzma-26.02/libchdr-lzma.a \
+            build-hazard3/deps/zstd-1.5.7/libzstd.a \
+            build-hazard3/deps/miniz-3.1.2/libminiz.a
+
+      - name: Run under qemu-system-riscv32 and enforce RAM budget
+        run: |
+          timeout 60 qemu-system-riscv32 -M virt -nographic -bios none -semihosting -m 64M \
+            -kernel tests/rp2350-riscv/fw.elf > rp2350-riscv-ram.log 2>&1
+          cat rp2350-riscv-ram.log
+          python3 tests/rp2350-riscv/check_budget.py rp2350-riscv-ram.log

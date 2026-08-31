@@ -38,20 +38,32 @@ directory provides instead:
 
 ## CI
 
-`.github/workflows/esp32p4-build.yml` builds `chdr-static` with
-`cmake/toolchain-rv32imafc.cmake` - ESP32-P4's RISC-V cores share BL616's
-RV32IMAFC/ilp32f base ISA/ABI (see that file's header comment) - then
-compiles and links `smoke_test.c` + `chd_esp_vfs.c` against it with the
-generic `riscv64-unknown-elf-gcc`, not Espressif's own `riscv32-esp-elf`
-toolchain or ESP-IDF. That means this CI job proves the integration code
-builds and links cleanly against libchdr under ESP32-P4's ABI, but *not*
-that it builds under the real ESP-IDF toolchain/build system, and (same as
-`tangcore-bl616`) there is no ESP32-P4 hardware in CI, so it cannot prove
-`chd_open()`/`chd_read()` work at runtime.
+Two workflows:
 
-For real-hardware peak-heap-per-codec numbers, see
-`.github/workflows/rp2350-ram-budget.yml`'s methodology (Cortex-M33, not
-ESP32-P4's RISC-V cores) - the equivalent qemu-system-riscv32 run for
-RV32IMAFC/ilp32f already exists as `.github/workflows/rv32-ram-budget.yml`
-and applies unchanged to ESP32-P4's shared ABI; only the SRAM headroom
-differs (768KB HP L2MEM here vs. BL616's 480KB).
+- `.github/workflows/esp32p4-build.yml` builds `chdr-static` with
+  `cmake/toolchain-rv32imafc.cmake` - ESP32-P4's RISC-V cores share BL616's
+  RV32IMAFC/ilp32f base ISA/ABI (see that file's header comment) - then
+  compiles and links `smoke_test.c` + `chd_esp_vfs.c` against it with the
+  generic `riscv64-unknown-elf-gcc`, not Espressif's own `riscv32-esp-elf`
+  toolchain or ESP-IDF. That means this job proves the integration code
+  builds and links cleanly against libchdr under ESP32-P4's ABI, but *not*
+  that it builds under the real ESP-IDF toolchain/build system, and (same
+  as `tangcore-bl616`) there is no ESP32-P4 hardware in CI, so it cannot
+  prove `chd_open()`/`chd_read()` work at runtime.
+- `.github/workflows/esp32p4-ram-budget.yml` runs `tests/esp32p4/fw.c`'s
+  peak-heap-per-codec probe under `qemu-system-riscv32`, same as
+  `.github/workflows/rv32-ram-budget.yml` (byte-identical methodology and
+  measured numbers, since it's the same ISA/ABI/toolchain/qemu machine -
+  see `tests/esp32p4/check_budget.py`'s docstring). It exists as its own
+  named job/budget file mainly for visibility - so ESP32-P4 shows up
+  explicitly in CI rather than only implicitly via `rv32-ram-budget.yml`'s
+  BL616-labeled job. Measured baseline (2026-08-31,
+  `CHDR_LOWRAM_TARGET=ON`): hd_zlib 52,074B, hd_zstd 105,825B, hd_lzma
+  30,642B, hd_huff 21,839B, cd_cdzl 136,341B, cd_cdzs 243,784B, cd_cdlz
+  135,427B - all a small fraction of the ESP32-P4's 768KB HP L2MEM.
+
+Neither workflow uses Espressif's own `riscv32-esp-elf` toolchain or
+ESP-IDF, and there is no ESP32-P4 hardware in CI, so together they prove
+the ABI links cleanly and the codecs' heap high-water marks don't regress -
+not that a real ESP-IDF build works or that `chd_open()`/`chd_read()` work
+at runtime.

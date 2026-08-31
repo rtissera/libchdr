@@ -1,10 +1,12 @@
-name: RP2350 RAM budget
+name: RP2350 (Arm) RAM budget
 
 # Cross-compiles libchdr for Cortex-M33 hard-float (the Raspberry Pi
 # RP2350's Arm core mode - dual Cortex-M33 @150MHz, 520KB SRAM; the RP2350
-# can alternatively run its two Hazard3 RISC-V cores, but Cortex-M33 is
-# what every current RP2350 SDK/toolchain targets by default) and runs a
-# peak-heap-per-codec probe under qemu-system-arm. Same probe/methodology as
+# can alternatively run its two Hazard3 RISC-V cores instead - see
+# rp2350-riscv-ram-budget.yml - but Cortex-M33 is what every current RP2350
+# SDK/toolchain targets by default, and the pair boot as alternatives, not
+# concurrently) and runs a peak-heap-per-codec probe under qemu-system-arm.
+# Same probe/methodology as
 # rv32-ram-budget.yml (see that workflow for the LOWRAM_TARGET/LZMA
 # dict-size-bug background) - this one exists because Cortex-M33's ABI
 # (struct layout/alignment, in particular hard-float) differs from
@@ -25,7 +27,7 @@ name: RP2350 RAM budget
 on: [push, pull_request]
 
 jobs:
-  rp2350-ram-budget:
+  rp2350-arm-ram-budget:
     runs-on: ubuntu-latest
 
     steps:
@@ -52,7 +54,7 @@ jobs:
         run: tests/corpus/generate.sh
 
       - name: Generate embedded corpus headers
-        run: tests/rp2350/gen_embed.sh
+        run: tests/rp2350-arm/gen_embed.sh
 
       - name: Build RAM-budget firmware
         run: |
@@ -62,7 +64,7 @@ jobs:
             -Wl,--defsym=__ram=0x38000000 -Wl,--defsym=__ram_size=0x00400000 \
             -I include -I tests/rp2350 -Os -flto \
             -Wl,--wrap=malloc -Wl,--wrap=free -Wl,--wrap=realloc -Wl,--wrap=calloc \
-            -o tests/rp2350/fw.elf tests/rp2350/fw.c \
+            -o tests/rp2350-arm/fw.elf tests/rp2350-arm/fw.c \
             build-m33/libchdr-static.a \
             build-m33/deps/lzma-26.02/libchdr-lzma.a \
             build-m33/deps/zstd-1.5.7/libzstd.a \
@@ -71,6 +73,6 @@ jobs:
       - name: Run under qemu-system-arm and enforce RAM budget
         run: |
           timeout 60 qemu-system-arm -M mps2-an505 -cpu cortex-m33 -nographic -semihosting -m 16M \
-            -kernel tests/rp2350/fw.elf > rp2350-ram.log 2>&1
-          cat rp2350-ram.log
-          python3 tests/rp2350/check_budget.py rp2350-ram.log
+            -kernel tests/rp2350-arm/fw.elf > rp2350-arm-ram.log 2>&1
+          cat rp2350-arm-ram.log
+          python3 tests/rp2350-arm/check_budget.py rp2350-arm-ram.log

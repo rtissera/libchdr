@@ -1,16 +1,17 @@
 /*
- * Cortex-M33 (RP2350) RAM-budget probe for libchdr.
+ * Hazard3 (RP2350) RAM-budget probe for libchdr.
  *
  * Opens a curated set of CHDs (embedded in flash, see gen_embed.sh) through
  * an in-memory core_file backend, reads every hunk with block-CRC
  * verification on, and reports peak malloc high-water mark per codec.
  *
- * Runs under `qemu-system-arm -M mps2-an505 -semihosting` (an Armv8-M
- * Mainline Cortex-M33 board, not the real RP2350 SoC - only the core
- * ISA/ABI and heap high-water numbers matter here, not the peripherals) -
- * see .github/workflows/rp2350-ram-budget.yml for the full build+run
- * recipe, and tests/rp2350/check_budget.py for how the printed numbers are
- * enforced.
+ * Runs under `qemu-system-riscv32 -M virt -semihosting` (a generic RISC-V
+ * board, not the real RP2350 SoC or its Hazard3 cores specifically - only
+ * the rv32imac/ilp32 (soft-float) ISA/ABI and heap high-water numbers
+ * matter here, not the peripherals) - see
+ * .github/workflows/rp2350-riscv-ram-budget.yml for the full build+run
+ * recipe, and tests/rp2350-riscv/check_budget.py for how the printed
+ * numbers are enforced.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,7 +164,7 @@ static void run_one(const char *name, const unsigned char *data, unsigned int le
 
 int main(void)
 {
-	printf("=== libchdr cortex-m33 peak-heap-per-codec ===\n");
+	printf("=== libchdr rv32imac/ilp32 (hazard3) peak-heap-per-codec ===\n");
 	run_one("hd_zlib", hd_zlib_chd, hd_zlib_chd_len);
 	run_one("hd_zstd", hd_zstd_chd, hd_zstd_chd_len);
 	run_one("hd_lzma", hd_lzma_chd, hd_lzma_chd_len);

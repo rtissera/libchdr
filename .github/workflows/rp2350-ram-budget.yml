@@ -1,0 +1,76 @@
+name: RP2350 RAM budget
+
+# Cross-compiles libchdr for Cortex-M33 hard-float (the Raspberry Pi
+# RP2350's Arm core mode - dual Cortex-M33 @150MHz, 520KB SRAM; the RP2350
+# can alternatively run its two Hazard3 RISC-V cores, but Cortex-M33 is
+# what every current RP2350 SDK/toolchain targets by default) and runs a
+# peak-heap-per-codec probe under qemu-system-arm. Same probe/methodology as
+# rv32-ram-budget.yml (see that workflow for the LOWRAM_TARGET/LZMA
+# dict-size-bug background) - this one exists because Cortex-M33's ABI
+# (struct layout/alignment, in particular hard-float) differs from
+# rv32imafc/ilp32f, so the RV32 numbers don't stand in for it.
+#
+# Runs on qemu-system-arm's mps2-an505 machine (Armv8-M Mainline
+# Cortex-M33, TrustZone-capable FPGA reference board) - not the real
+# RP2350 SoC, same caveat as rv32-ram-budget.yml's generic "virt" machine:
+# only the core ISA/ABI and heap high-water numbers matter here, not the
+# peripherals. Built entirely in the Secure state at the board's Secure
+# ZBT SSRAM aliases (code @0x10000000, data/stack @0x38000000) since this
+# probe never touches TrustZone - it's simpler than juggling a Secure/
+# Non-secure split for a memory-footprint-only smoke test.
+#
+# Built with -Os -flto and CHDR_LOWRAM_TARGET=ON, same rationale as
+# rv32-ram-budget.yml.
+
+on: [push, pull_request]
+
+jobs:
+  rp2350-ram-budget:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Cortex-M33 toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi picolibc-arm-none-eabi \
+            binutils-arm-none-eabi qemu-system-arm mame-tools
+
+      - name: Configure (cortex-m33 hard-float)
+        run: >
+          cmake -B build-m33
+          -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/cmake/toolchain-cortex-m33.cmake
+          -DBUILD_SHARED_LIBS=OFF -DINSTALL_STATIC_LIBS=OFF
+          -DCMAKE_BUILD_TYPE=MinSizeRel -DCHDR_LOWRAM_TARGET=ON -DCHDR_WANT_TESTS=OFF
+
+      - name: Build chdr-static
+        run: cmake --build build-m33 --target chdr-static -j$(nproc)
+
+      - name: Generate corpus seeds (chdman)
+        run: tests/corpus/generate.sh
+
+      - name: Generate embedded corpus headers
+        run: tests/rp2350/gen_embed.sh
+
+      - name: Build RAM-budget firmware
+        run: |
+          arm-none-eabi-gcc -mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16 \
+            --specs=picolibc.specs --crt0=semihost --oslib=semihost \
+            -Wl,--defsym=__flash=0x10000000 -Wl,--defsym=__flash_size=0x00400000 \
+            -Wl,--defsym=__ram=0x38000000 -Wl,--defsym=__ram_size=0x00400000 \
+            -I include -I tests/rp2350 -Os -flto \
+            -Wl,--wrap=malloc -Wl,--wrap=free -Wl,--wrap=realloc -Wl,--wrap=calloc \
+            -o tests/rp2350/fw.elf tests/rp2350/fw.c \
+            build-m33/libchdr-static.a \
+            build-m33/deps/lzma-26.02/libchdr-lzma.a \
+            build-m33/deps/zstd-1.5.7/libzstd.a \
+            build-m33/deps/miniz-3.1.2/libminiz.a
+
+      - name: Run under qemu-system-arm and enforce RAM budget
+        run: |
+          timeout 60 qemu-system-arm -M mps2-an505 -cpu cortex-m33 -nographic -semihosting -m 16M \
+            -kernel tests/rp2350/fw.elf > rp2350-ram.log 2>&1
+          cat rp2350-ram.log
+          python3 tests/rp2350/check_budget.py rp2350-ram.log

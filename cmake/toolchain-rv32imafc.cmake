@@ -4,6 +4,12 @@
 # struct layout or memory footprint - only the RAM/heap numbers matter here, not
 # instruction selection.
 #
+# Also matches the RISC-V cores on Espressif's ESP32-P4 (dual-core RV32IMAFC
+# up to ~360-400MHz, 768KB HP L2MEM + 32KB LP SRAM) for the same reason - its
+# Zc/XespV/XespLoop extensions are additive and don't change struct layout or
+# the base ilp32f ABI either. See contrib/esp32p4/ and
+# .github/workflows/esp32p4-build.yml.
+#
 # Requires (Ubuntu/Debian): gcc-riscv64-unknown-elf, picolibc-riscv64-unknown-elf,
 # binutils-riscv64-unknown-elf. Used with -DCMAKE_TOOLCHAIN_FILE=.
 

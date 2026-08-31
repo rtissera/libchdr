@@ -2,6 +2,11 @@
 *.d
 build/
 build-rv32/
+build-m33/
+build-esp32p4/
 tests/rv32/embed/
 tests/rv32/fw.elf
 tests/rv32/*.log
+tests/rp2350/embed/
+tests/rp2350/fw.elf
+tests/rp2350/*.log

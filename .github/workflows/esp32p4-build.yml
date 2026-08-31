@@ -1,0 +1,55 @@
+name: ESP32-P4 build
+
+# Compile+link smoke test for contrib/esp32p4/chd/chd_esp_vfs.{h,c} - the
+# stdio-FILE*-backed core_file_callbacks bridge for ESP32-P4 firmware (see
+# contrib/esp32p4/README.md). Proves it builds and fully links against
+# libchdr, catching header/ABI mismatches between the two.
+#
+# Uses the same generic riscv64-unknown-elf-gcc (rv32imafc/ilp32f) toolchain
+# as rv32-ram-budget.yml/cmake/toolchain-rv32imafc.cmake, not Espressif's own
+# riscv32-esp-elf toolchain or ESP-IDF - there is no pinned open-source
+# ESP32-P4 firmware project to build+link against the way
+# bl616-tangcore-build.yml does for BL616 against nand2mario's firmware-bl616,
+# so this only proves the RV32IMAFC/ilp32f ABI ESP32-P4's RISC-V cores share
+# with BL616 links cleanly, not that it builds under the real ESP-IDF build
+# system. No ESP32-P4 hardware in CI either way, so this can't prove
+# chd_open()/chd_read() work at runtime - see smoke_test.c.
+
+on: [push, pull_request]
+
+jobs:
+  esp32p4-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install RV32 toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf \
+            binutils-riscv64-unknown-elf
+
+      - name: Configure (rv32imafc/ilp32f)
+        run: >
+          cmake -B build-esp32p4
+          -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/cmake/toolchain-rv32imafc.cmake
+          -DBUILD_SHARED_LIBS=OFF -DINSTALL_STATIC_LIBS=OFF
+          -DCMAKE_BUILD_TYPE=MinSizeRel -DCHDR_LOWRAM_TARGET=ON -DCHDR_WANT_TESTS=OFF
+
+      - name: Build chdr-static
+        run: cmake --build build-esp32p4 --target chdr-static -j$(nproc)
+
+      - name: Build + link smoke test
+        run: |
+          riscv64-unknown-elf-gcc -march=rv32imafc -mabi=ilp32f \
+            --specs=picolibc.specs --crt0=semihost --oslib=semihost \
+            -I include -I contrib/esp32p4 -Os -flto \
+            -o contrib/esp32p4/smoke_test.elf \
+            contrib/esp32p4/smoke_test.c contrib/esp32p4/chd/chd_esp_vfs.c \
+            build-esp32p4/libchdr-static.a \
+            build-esp32p4/deps/lzma-26.02/libchdr-lzma.a \
+            build-esp32p4/deps/zstd-1.5.7/libzstd.a \
+            build-esp32p4/deps/miniz-3.1.2/libminiz.a
+          riscv64-unknown-elf-size contrib/esp32p4/smoke_test.elf

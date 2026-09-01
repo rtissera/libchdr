@@ -40,7 +40,9 @@ directly:
 
 - `chd/chd_fatfs.{h,c}` - a `core_file_callbacks` implementation backed by
   FatFS (`f_open`/`f_read`/`f_lseek`/`f_close`), the bridge libchdr needs to
-  open a CHD from an SD card or USB drive under this firmware.
+  open a CHD from an SD card or USB drive under this firmware. Generic (only
+  calls `ff.h`, nothing BL616-specific) - also reused as-is by
+  `../rp2350/README.md`.
 - `patches/firmware-bl616-libchdr-integration.patch` - modifies
   `firmware-bl616`'s `CMakeLists.txt` (vendors libchdr in, sets
   `LOWRAM_TARGET=1`) and `main.cpp` (adds a `chd_link_probe()` call). The

@@ -29,8 +29,29 @@ struct _zlib_allocator
 typedef struct _zlib_codec_data zlib_codec_data;
 struct _zlib_codec_data
 {
+#ifdef CHDR_SYSTEM_ZLIB
 	z_stream				inflater;
 	zlib_allocator			allocator;
+#else
+	/* With bundled miniz we drive tinfl directly rather than going through
+	 * the mz_inflate*() wrappers. Those allocate miniz's inflate_state, which
+	 * embeds a fixed 32KB LZ dictionary (m_dict) - 41168 bytes per instance
+	 * against tinfl_decompressor's 8376.
+	 *
+	 * The dictionary is dead weight here. libchdr always decompresses a hunk
+	 * as one complete stream into a buffer large enough to hold all of it, so
+	 * mz_inflate() was already passing TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
+	 * and tinfl was using the caller's output buffer as its own dictionary;
+	 * m_dict was allocated and never touched. miniz also refuses any window
+	 * size other than +/-15, so the wrappers give no way to ask for less.
+	 *
+	 * A CD-flavoured CHD instantiates this three or four times (cdzl needs one
+	 * for sector data and one for subcode; cdlz and cdfl each need one for
+	 * subcode), so dropping the dictionary saves ~32KB apiece - measured
+	 * against a 254KB peak for a three-codec CD file. Heap-allocated rather
+	 * than inline because chd_file embeds every codec's state by value. */
+	tinfl_decompressor *	inflater;
+#endif
 };
 
 /* zlib compression codec */

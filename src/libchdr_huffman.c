@@ -582,6 +582,18 @@ enum huffman_error huffman_build_lookup_table(struct huffman_decoder* decoder)
 	for (i = 0; i < l1size; i++)
 		prefix_subid[i] = -1;
 
+	/* The whole lookup is rebuilt from scratch here, so the subtable arena
+	 * starts empty every time. Without this reset the count carried over
+	 * between calls - a decoder is created once per codec instance
+	 * (huff_codec_init) and reused for every hunk, so subtable_count grew
+	 * monotonically across hunks until it tripped the 2048 guard below and
+	 * every subsequent huffman hunk failed with HUFFERR_TOO_MANY_CONTEXTS.
+	 * That surfaced as a history-dependent CHDERR_DECOMPRESSION_ERROR:
+	 * byte-identical input decoded fine or failed depending only on how many
+	 * huffman-coded hunks had been read before it. The allocation itself is
+	 * kept and grown by realloc, so resetting the count costs nothing. */
+	decoder->subtable_count = 0;
+
 	/* Canonical-code coverage of the table is only guaranteed complete when
 	 * every assigned length participates in the Kraft-equality check in
 	 * huffman_assign_canonical_codes() (length 1 is exempt there, and a

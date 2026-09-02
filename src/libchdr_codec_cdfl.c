@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef CHDR_DEBUG_ZLIB
+#include <stdio.h>
+#endif
 
 #include "../include/libchdr/cdrom.h"
 
@@ -71,18 +74,37 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	/* reset and decode */
 	uint32_t frames = destlen / CD_FRAME_SIZE;
 
-	if (!flac_decoder_reset(&cdfl->decoder, 44100, 2, cdfl_codec_blocksize(frames * CD_MAX_SECTOR_DATA), src, complen))
-		return CHDERR_DECOMPRESSION_ERROR;
+	if (!flac_decoder_reset(&cdfl->decoder, 44100, 2, cdfl_codec_blocksize(frames * CD_MAX_SECTOR_DATA), src, complen)) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("cdfl_codec_decompress: stage=flac_reset complen=%u alloc_failed=%d\n",
+			(unsigned)complen, cdfl->decoder.alloc_failed);
+#endif
+		/* reset() allocates a fresh ~40KB drflac decoder per hunk; on a
+		 * small-RAM target that, not the stream, is what usually fails */
+		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
+	}
 	buffer = &cdfl->buffer[0];
-	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian))
-		return CHDERR_DECOMPRESSION_ERROR;
+	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian)) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("cdfl_codec_decompress: stage=flac_decode complen=%u alloc_failed=%d\n",
+			(unsigned)complen, cdfl->decoder.alloc_failed);
+#endif
+		/* alloc_failed is cleared by the reset() above, so it can only be
+		 * set here by an allocation the decode itself attempted */
+		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
+	}
 
 #if WANT_SUBCODE
 	/* inflate the subcode data */
 	offset = flac_decoder_finish(&cdfl->decoder);
 	ret = zlib_codec_decompress(&cdfl->subcode_decompressor, src + offset, complen - offset, &cdfl->buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
-	if (ret != CHDERR_NONE)
+	if (ret != CHDERR_NONE) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("cdfl_codec_decompress: stage=subcode offset=%u complen_subcode=%u err=%d\n",
+			(unsigned)offset, (unsigned)(complen - offset), ret);
+#endif
 		return ret;
+	}
 #else
 	flac_decoder_finish(&cdfl->decoder);
 #endif

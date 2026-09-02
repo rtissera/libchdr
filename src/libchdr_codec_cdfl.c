@@ -9,6 +9,26 @@
 
 #include "../include/libchdr/cdrom.h"
 
+/* CHDR_PROFILE_CDFL: attribute cdfl hunk time across its three stages.
+ * cdfl measured ~3.6x cdlz's codec-only time per hunk on ESP32-P4, which is
+ * the opposite of what raw FLAC vs LZMA decode cost would predict - the
+ * suspicion being flac_decoder_reset()'s per-hunk drflac_open_with_metadata()
+ * (full decoder teardown + rebuild, ~40KB alloc, STREAMINFO reparse) rather
+ * than the audio decode itself. The host supplies the clock so this stays
+ * free of any platform dependency. */
+#ifdef CHDR_PROFILE_CDFL
+extern int64_t chdr_prof_now_us(void);
+uint64_t chdr_prof_flac_reset_us;
+uint64_t chdr_prof_flac_decode_us;
+uint64_t chdr_prof_subcode_us;
+uint64_t chdr_prof_cdfl_hunks;
+#define PROF_T0() int64_t prof_t = chdr_prof_now_us()
+#define PROF_ACC(acc) do { acc += (uint64_t)(chdr_prof_now_us() - prof_t); } while (0)
+#else
+#define PROF_T0() do {} while (0)
+#define PROF_ACC(acc) do {} while (0)
+#endif
+
 static uint32_t cdfl_codec_blocksize(uint32_t bytes)
 {
 	/* for CDs it seems that CD_MAX_SECTOR_DATA is the right target */
@@ -74,6 +94,7 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	/* reset and decode */
 	uint32_t frames = destlen / CD_FRAME_SIZE;
 
+	{ PROF_T0();
 	if (!flac_decoder_reset(&cdfl->decoder, 44100, 2, cdfl_codec_blocksize(frames * CD_MAX_SECTOR_DATA), src, complen)) {
 #ifdef CHDR_DEBUG_ZLIB
 		printf("cdfl_codec_decompress: stage=flac_reset complen=%u alloc_failed=%d\n",
@@ -83,7 +104,9 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		 * small-RAM target that, not the stream, is what usually fails */
 		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
 	}
+	PROF_ACC(chdr_prof_flac_reset_us); }
 	buffer = &cdfl->buffer[0];
+	{ PROF_T0();
 	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian)) {
 #ifdef CHDR_DEBUG_ZLIB
 		printf("cdfl_codec_decompress: stage=flac_decode complen=%u alloc_failed=%d\n",
@@ -93,9 +116,11 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		 * set here by an allocation the decode itself attempted */
 		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
 	}
+	PROF_ACC(chdr_prof_flac_decode_us); }
 
 #if WANT_SUBCODE
 	/* inflate the subcode data */
+	{ PROF_T0();
 	offset = flac_decoder_finish(&cdfl->decoder);
 	ret = zlib_codec_decompress(&cdfl->subcode_decompressor, src + offset, complen - offset, &cdfl->buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
 	if (ret != CHDERR_NONE) {
@@ -105,8 +130,12 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 #endif
 		return ret;
 	}
+	PROF_ACC(chdr_prof_subcode_us); }
 #else
 	flac_decoder_finish(&cdfl->decoder);
+#endif
+#ifdef CHDR_PROFILE_CDFL
+	chdr_prof_cdfl_hunks++;
 #endif
 
 	/* reassemble the data */

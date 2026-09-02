@@ -106,61 +106,157 @@ at hunks 0-272, so it cannot be manufacturing the "0 decompression errors"
 result. The flash corpus is uncapped in all three rows and is the
 like-for-like comparison.
 
-## `LOWRAM_TARGET` is not optional here
+## `LOWRAM_TARGET` is not optional here - and it had a correctness bug
 
 With `LOWRAM_TARGET=0` this board looks far more limited than it is: 76 of
 128 SD files failed at `chd_open()` with `CHDERR_OUT_OF_MEMORY`, plus 3
 CD-FLAC and 2 AVHuff failures further in. The boundary was sharp - the
-largest file that opened had a 164KB rawmap, and the smallest that failed
+largest file that opened had a 164KB rawmap, the smallest that failed
 needed 176KB, against 582KB free / 524KB largest block. Sizes ran to a
 3.1MB rawmap, which cannot fit in this part's SRAM at all under an eager
 map.
 
-`LOWRAM_TARGET=1` takes **all** of that to zero: lazy CHDv5 map decode,
-`compressed` grown on demand rather than to the worst case, and codec
-`init()` deferred until a hunk actually needs that slot. The last one also
-resolves the AVHuff and CD-FLAC failures as a side effect - a CHDv5 header
-lists up to 4 candidate codecs and an eager build pays for all of them at
-once, so deferring means AVHuff's ~500KB working set and drflac's ~40KB
-per-hunk buffer are no longer competing with dictionaries that hunk never
-uses.
+`LOWRAM_TARGET=1` takes all of that to zero: lazy CHDv5 map decode,
+`compressed` grown on demand, and codec `init()` deferred until a hunk
+needs that slot. Measured heap cost, once the instrumentation was fixed:
 
-**It is close to free.** Across the 20 flash-corpus files that pass in both
-configurations (uncapped, identical content), total decode time is 3826ms
-vs 3822ms - 1.00x. The three real CD titles (762-1490ms each, where the
-measurement is least noisy) are 1.00x individually. Per-file spread is
-within about +/-10% and confined to sub-20ms files where noise dominates.
+| content | open cost | libchdr resident |
+|---|---|---|
+| CD (19584B hunks) | **5 KB** | ~6 KB |
+| HD (4096B hunks) | **5 KB** | ~5 KB |
+| AVHuff (223668B hunks) | 5 KB | ~7 KB |
 
-Treat `LOWRAM_TARGET=1` as the default for any target in this memory class,
-not as a fallback for when something fails.
+**Opening a 271328-hunk CHD costs 5KB**, and libchdr's resident footprint
+is 5-7KB regardless of file size. Hunk count no longer drives RAM at all;
+the real constraint is the caller's own hunk buffer.
 
-## FLAC: `drflac` is re-allocated once per hunk
+It is also close to free on throughput: across the 20 flash-corpus files
+that pass in both configurations - uncapped, identical content - total
+decode time is 3826ms versus 3822ms, or 1.00x.
 
-**No longer causes failures** under `LOWRAM_TARGET=1` - kept because the
-underlying inefficiency is real and the error-reporting fix stands.
+**But it selects a second-level huffman lookup table that the default build
+never uses, and that path had a bug** (fixed; see the commit resetting the
+huffman subtable arena). `huffman_build_lookup_table()` rebuilt the lookup
+from scratch on every call without resetting `subtable_count`, so the count
+grew monotonically across hunks until it tripped a 2048 guard, after which
+every subsequent huffman hunk failed. It also leaked up to 256KB - in the
+configuration whose entire purpose is saving memory.
 
-With `LOWRAM_TARGET=0`, three pcenginecd titles failed with
-`CHDERR_OUT_OF_MEMORY` at the first CD-FLAC hunk. They were exactly the
-three largest files in the corpus by hunk count (11055, 11271, 11825)
-while the largest passing file was 7312 - a clean monotone boundary, which
-is the signature of a headroom wall rather than a data-dependent decode
-bug. All three decode fully on desktop, in both LP64 and ILP32 (`gcc
--m32`, so `DRFLAC_64BIT` isn't the difference).
+Two things about how that was nearly missed are worth recording:
 
-The mechanism: `flac_decoder_reset()` calls `drflac_open_with_metadata()`
-*per hunk*, which allocates a fresh decoder plus a decoded-sample buffer
-sized from STREAMINFO - about 40KB for a CD-FLAC hunk - and frees it
-again on the next hunk. Once a title's rawmap is large enough
-(12 bytes/hunk, so ~142KB at 11825 hunks), that 40KB no longer fits.
+- It is only reachable with `LOWRAM_TARGET=1` **and** on CHDs that use
+  `CHD_CODEC_HUFFMAN`, which is rare - 0.2% of hunks in the file that
+  exposed it.
+- The sweep that reported "112/128 files, zero decompression errors" was
+  **capped at 600 hunks per file**. These files fail ~20000 hunks in. The
+  cap introduced to make the sweep tractable is exactly what hid it.
 
-This used to surface as `CHDERR_DECOMPRESSION_ERROR`, which is what made
-it look like a second instance of the miniz bug. `flac_decoder_reset()`
-now routes drflac through allocation callbacks that record failure, so
-`libchdr_codec_cdfl.c`/`libchdr_codec_flac.c` can return
-`CHDERR_OUT_OF_MEMORY` instead - confirmed on hardware
-(`stage=flac_reset ... alloc_failed=1`). Reusing one drflac instance
-across hunks instead of rebuilding it every time would both remove this
-failure and save the per-hunk malloc/free churn; not attempted here.
+Treat `LOWRAM_TARGET=1` as the default for any target in this memory class -
+with that fix applied.
+
+## FLAC: the cost is the decode, not the per-hunk rebuild
+
+`flac_decoder_reset()` calls `drflac_open_with_metadata()` once per hunk -
+a full decoder teardown and rebuild, ~40KB allocation, STREAMINFO reparse -
+where `cdlz` simply reuses its LZMA state. cdfl costs about 3.6x cdlz per
+hunk at identical geometry, so the obvious conclusion was that the rebuild
+explained it.
+
+**It does not.** `CHDR_PROFILE_CDFL` splits the three stages, measured on
+hardware:
+
+| stage | share | per hunk |
+|---|---|---|
+| `flac_reset` (the rebuild) | 0.7 - 7.9% | ~0.03 ms |
+| `flac_decode` | **58.6 - 95.6%** | 0.245 - 3.622 ms |
+| `subcode` (zlib) | 3.7 - 33.5% | ~0.14 ms |
+
+The rebuild is about 1% of cdfl's time. The cost is genuine FLAC decoding.
+Reusing the drflac instance across hunks is therefore a **memory**
+optimisation, not a throughput one - worth doing, because that 40KB
+per-hunk allocation is what produced `CHDERR_OUT_OF_MEMORY` on the three
+largest pcenginecd titles under the eager map, but it will not make cdfl
+meaningfully faster.
+
+Recorded because the wrong version of this conclusion is very easy to
+reach: the rebuild is real, it is obviously wasteful, and it sits directly
+in the hot path. Only measurement separates "wasteful" from "expensive".
+
+For reference, per-codec cost at identical geometry (10 hunks of 19584
+bytes, RAM-sourced, so no I/O in the number):
+
+| codec | ms/hunk | minus `cd_none` baseline |
+|---|---|---|
+| `cd_none` | 1.218 | - |
+| `cd_cdzs` | 1.901 | 0.683 |
+| `cd_cdzl` | 1.945 | 0.727 |
+| `cd_cdlz` | 2.303 | 1.085 |
+| `cd_cdfl` | 5.087 | **3.869** |
+
+## Storage, not decode, is the bottleneck
+
+Per-file attribution (timing inside the storage callbacks, which are the
+only path from the decoder to the card) puts I/O at 10-85% of wall time
+depending on the file. Comparing the same files and the same build flags
+against an x86-64 desktop (Ryzen 7 PRO 8840HS) separates the two cleanly:
+
+| | ESP32-P4 | x86-64 | ratio |
+|---|---|---|---|
+| whole sample, wall clock | 2345.9 s | 145.3 s | **16.1x** |
+| decode only (wall x (1 - io%)) | | | **6.0 - 8.6x**, mean ~7.2x |
+
+The CPU-only ratio is remarkably tight across four codec families, five
+hunk geometries and a 500x file-size range. A ~7x gap between a 400MHz
+RISC-V core and a modern x86 core is about what clock and microarchitecture
+predict on their own - libchdr's decode is not doing anything pathological
+on RISC-V. Everything beyond that ~7x is storage, and it is the part worth
+optimising.
+
+Two caveats on the comparison: the x86 side reads through the page cache,
+so its I/O is nearly free, and the CPU-only column is derived by
+subtracting measured io%, not measured directly.
+
+### Read amplification
+
+libchdr reads whole hunks only - no sub-hunk API, no decoded-hunk cache for
+ordinary reads - so a sub-hunk request costs a full hunk decode. Measured
+at 8 units per hunk:
+
+| units | aligned hunks/req | amp | unaligned hunks/req | amp |
+|---|---|---|---|---|
+| 1 | 1.00 | **8.00x** | 1.00 | 8.00x |
+| 2 | 1.00 | 4.00x | 1.10 | 4.40x |
+| 4 | 1.00 | 2.00x | 1.43 | 2.85x |
+| 8 | 1.00 | **1.00x** | 2.00 | **2.00x** |
+| 16 | 2.00 | 1.00x | 3.00 | 1.50x |
+
+Latency is flat from 1 to 8 units - a one-sector read takes the same wall
+time as a whole hunk. **Integrators should read whole, hunk-aligned
+hunks**; an unaligned 8-unit read touches two hunks and doubles the work
+for nothing.
+
+Random access costs **1.8-2.6x** sequential, which is the first
+measurement of what `v5_resume_cache`'s sequential fast path is worth.
+
+### FATFS fast seek is essential on this storage
+
+FatFs walks the FAT cluster chain on every `f_lseek`, and restarts from the
+first cluster on any **backward** seek. Every `COMPRESSION_SELF` reference
+is backward (measured: 100%, all 14 sample files), so a self-reference-heavy
+CHD pays a full chain walk per hunk. On a 271328-hunk, 29.2%-self-ref file
+this took reads from 2.7 to 85 ms/hunk and made a run look hung.
+
+`CONFIG_FATFS_USE_FASTSEEK=y` makes `lseek` O(1) via a cluster link map
+table. In the same 14 minutes the run then reached hunk 245000 instead of
+25000 - about **10x**.
+
+Caveat worth knowing: ESP-IDF allocates a fixed
+`CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE` (64 words, ~31 fragments) per open
+file and, if a file needs more, **silently frees it and reverts to the slow
+path** - no error, no log line. Every file on this card is a single
+fragment (32KB clusters), so it engages here; a fragmented card would
+quietly get nothing. FatFs reports the required size in `cltbl[0]` even
+when it fails, so a two-phase allocation would size it exactly.
 
 ## Resolved: ESP32 ROM `miniz` symbol collision
 

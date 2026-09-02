@@ -1,0 +1,30 @@
+# Waveshare ESP32-P4-NANO: 16MB NOR flash, 32MB PSRAM (in-package, not used
+# by this benchmark - everything here fits in internal 768KB HP L2MEM).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# LZMA/zstd dictionaries and the FLAC/huffman decoders' local buffers can run
+# deep call chains - default main task stack (3.5KB) is cut close for that,
+# same margin tests/esp32p4/fw.c's QEMU probe already measured peak-heap
+# against (this only affects *stack*, not the numbers printed there).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# esp_timer_get_time() is the only ESP-IDF facility this benchmark needs -
+# everything else (Wi-Fi/BT co-processor, Ethernet, USB host, SD/MMC) stays
+# off since none of it is exercised by the flash-embedded corpus.
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=2048
+
+# Diagnostic: comprehensive heap poisoning (head/tail canaries on every
+# malloc'd block + fill-on-free) to pin down a real corruption-shaped
+# failure seen on real hardware (some zlib-coded hunks return
+# CHDERR_DECOMPRESSION_ERROR / large avhuff mallocs fail despite hundreds of
+# KB reported free) that does not reproduce on the desktop x86_64 build
+# against the exact same CHD bytes. Costs extra RAM/CPU - turn back off
+# once root-caused.
+CONFIG_HEAP_POISONING_COMPREHENSIVE=y
+
+# Onboard TF/SD card slot (native SDMMC slot 0, GPIO43/44/39-42, LDO chan 4)
+# - the real deployment storage path, not the flash-embedded corpus above.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255

@@ -58,7 +58,7 @@
  * max_freq_khz is left unset, which is what every measurement before the
  * bottleneck sweep used. SDMMC_FREQ_HIGHSPEED is 40MHz. */
 #ifndef SD_FREQ_KHZ
-#define SD_FREQ_KHZ SDMMC_FREQ_DEFAULT
+#define SD_FREQ_KHZ SDMMC_FREQ_HIGHSPEED
 #endif
 
 /* ---- in-memory core_file backend (chd_open_core_file_callbacks) ---- */
@@ -277,6 +277,25 @@ static uint32_t g_max_hunks = 0;
 #define BENCH_PROGRESS_EVERY 0
 #endif
 
+/* Read-ahead budget handed to libchdr per file. 0 keeps the historical
+ * one-read-per-hunk behaviour, which is the control this run needs. */
+#ifndef BENCH_CACHE_BUDGET
+#define BENCH_CACHE_BUDGET 0
+#endif
+
+/* Quick validation subset: the five files that between them are the only
+ * ones exercising each thing under test - cdzs context sharing (Ikaruga),
+ * the huffman fix and the LOWRAM map-read floor (kinst2), cdzl base streams
+ * (Shadowrun), the most I/O-bound file (Castlevania X) and the smallest
+ * hunks / most transactions (Bonk III). */
+#ifndef BENCH_QUICK
+#define BENCH_QUICK 0
+#endif
+
+#ifndef BENCH_RAWIO
+#define BENCH_RAWIO 0
+#endif
+
 /* ---- filesystem geometry / fragmentation ----
  *
  * Whether FATFS_USE_FASTSEEK does anything at all depends on how many
@@ -360,7 +379,15 @@ static void fs_report(const char *const *paths, size_t n)
 /* Pass B is cheap (a few minutes) but only meaningful on the sample */
 #define PASS_B_ENABLE (!BENCH_MODE_LEVER)
 
-#if defined(BENCH_ONE_FILE)
+#if BENCH_QUICK
+static const char *const g_sd_sample[] = {
+	"/sdcard/roms/psp/Castlevania X.chd",
+	"/sdcard/roms/dreamcast/Ikaruga (Japan).chd",
+	"/sdcard/roms/mame/kinst2/kinst2.chd",
+	"/sdcard/roms/segacd/Shadowrun (J).chd",
+	"/sdcard/roms/pcenginecd/Bonk III - Bonk's Big Adventure (USA).chd",
+};
+#elif defined(BENCH_ONE_FILE)
 /* single-file bisect mode, for chasing a hang down to one configuration */
 static const char *const g_sd_sample[] = { BENCH_ONE_FILE };
 #elif BENCH_MODE_LEVER
@@ -695,6 +722,13 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 		return r;
 	}
 
+#if BENCH_CACHE_BUDGET
+	{
+		chd_error be = chd_set_cache_budget(chd, BENCH_CACHE_BUDGET);
+		if (be != CHDERR_NONE)
+			printf("  (cache budget %d refused: %s)\n", (int)BENCH_CACHE_BUDGET, chd_error_string(be));
+	}
+#endif
 	heap_after_open = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
 	if (heap_after_open < heap_min_free) heap_min_free = heap_after_open;
 
@@ -746,7 +780,7 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 		}
 #endif
 		memset(buf, 0xAA, header->hunkbytes); /* poison, so a no-op decode is visible */
-		if ((i & 1023) == 0) {
+		if ((i & 63) == 0) {
 			size_t f = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
 			size_t lb = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
 			if (f < heap_min_free) heap_min_free = f;
@@ -807,6 +841,12 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 			(int)((heap_at_entry - heap_min_free) / 1024),
 			header->hunkbytes / 1024,
 			(int)(largest_min / 1024));
+		{
+			uint64_t rh = 0, rm = 0;
+			chd_get_cache_stats(chd, &rh, &rm);
+			if (rh || rm)
+				printf("  readahead: %" PRIu64 " hits / %" PRIu64 " refills\n", rh, rm);
+		}
 		lat_print("hunk latency (seq)", &seqlat);
 		prof_print();
 	}
@@ -903,6 +943,65 @@ void app_main(void)
 #else
 	sd_n = sd_scan_dir(SD_MOUNT_POINT, sd_paths, 0, 0);
 	printf("SD: found %d *.chd file(s) under %s\n", sd_n, SD_MOUNT_POINT);
+#endif
+
+#if BENCH_RAWIO
+	/* Is the ~2 MB/s ceiling libchdr's or the storage stack's? Read a real
+	 * file straight through fread() at several block sizes, no CHD parsing,
+	 * no decode. If this also tops out around 2 MB/s then the limit is the
+	 * card, the SDMMC driver or FATFS, and no amount of work inside libchdr
+	 * moves it. Sweeping the block size separately answers whether the path
+	 * is transaction-bound or bandwidth-bound. */
+	/* Split the card and driver from the filesystem: sdmmc_read_sectors()
+	 * talks to the card directly, so if this is also ~2 MB/s the limit is the
+	 * card or the SDMMC driver, and if it is much faster the cost is in FATFS
+	 * or the VFS/stdio layers above it. Read-only, so it cannot disturb the
+	 * card contents. */
+	printf("\n--- raw sector read, bypassing FATFS ---\n");
+	{
+		static const size_t nsec[] = { 8, 64, 128, 512 };   /* 4KB .. 256KB */
+		for (size_t i = 0; i < ARRAY_LEN(nsec); i++) {
+			size_t bytes = nsec[i] * 512;
+			uint8_t *buf = heap_caps_malloc(bytes, MALLOC_CAP_DMA);
+			if (!buf) { printf("  %4zu sectors (%3zu KB): DMA malloc failed\n", nsec[i], bytes/1024); continue; }
+			uint64_t total = 0; size_t sector = 40960;   /* well inside the data area */
+			int64_t t0 = esp_timer_get_time();
+			while (total < 16u*1024*1024) {
+				if (sdmmc_read_sectors(card, buf, sector, nsec[i]) != ESP_OK) break;
+				sector += nsec[i]; total += bytes;
+			}
+			int64_t t1 = esp_timer_get_time();
+			double secs = (t1 - t0) / 1e6;
+			printf("  %4zu sectors (%3zu KB): %6.2f MB in %5.2f s = %5.2f MB/s\n",
+				nsec[i], bytes/1024, total/1e6, secs, secs > 0 ? (total/1e6)/secs : 0);
+			heap_caps_free(buf);
+		}
+	}
+
+	printf("\n--- raw SD read throughput (no libchdr) ---\n");
+	{
+		static const size_t blks[] = { 4096, 16384, 32768, 131072, 524288 };
+		const char *probe = NULL;
+		for (int i = 0; i < sd_n && probe == NULL; i++) probe = sd_paths[i];
+		for (size_t bi = 0; bi < ARRAY_LEN(blks); bi++) {
+			uint8_t *buf = malloc(blks[bi]);
+			if (!buf) { printf("  %6zu KB block: malloc failed\n", blks[bi]/1024); continue; }
+			FILE *rf = fopen(probe, "rb");
+			if (!rf) { free(buf); printf("  fopen failed\n"); break; }
+			uint64_t total = 0; int64_t t0 = esp_timer_get_time();
+			/* 24MB is enough to be well past any caching and still quick */
+			while (total < 24u*1024*1024) {
+				size_t got = fread(buf, 1, blks[bi], rf);
+				if (got == 0) break;
+				total += got;
+			}
+			int64_t t1 = esp_timer_get_time();
+			double secs = (t1 - t0) / 1e6;
+			printf("  block %6zu KB: %7.2f MB in %6.2f s = %5.2f MB/s\n",
+				blks[bi]/1024, total/1e6, secs, (total/1e6)/secs);
+			fclose(rf); free(buf);
+		}
+	}
 #endif
 
 #if BENCH_FSINFO

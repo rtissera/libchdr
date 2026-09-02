@@ -193,6 +193,61 @@ bytes, RAM-sourced, so no I/O in the number):
 | `cd_cdlz` | 2.303 | 1.085 |
 | `cd_cdfl` | 5.087 | **3.869** |
 
+## The storage stack costs 8.4x, and most of it is avoidable
+
+Layering the same card at the same 40MHz clock three ways:
+
+| path | 4 KB | 32 KB | 64 KB | 256 KB |
+|---|---|---|---|---|
+| `sdmmc_read_sectors()` (driver) | 11.28 | 16.49 | 17.80 | **18.96 MB/s** |
+| `f_read()` (FatFs direct) | 9.71 | 10.59 | 10.58 | - |
+| `fread()` (VFS + newlib stdio) | 2.30 | 2.30 | 2.30 | 2.30 MB/s |
+
+The card sustains ~19 MB/s and scales with transfer size. FatFs costs 1.8x.
+**The VFS and newlib stdio wrapper above it costs another 4.6x**, and delivers
+a flat 2.30 MB/s no matter how large the request is.
+
+libchdr never has to care. `core_file_callbacks` already lets the embedder
+supply any reader, so a FatFs-backed backend is a drop-in replacement for the
+stdio one and **needs no change to the library**. Measured over the 5-file
+subset, identical read counts in both configurations - only the cost per byte
+differs:
+
+| file | stdio | FatFs | io% stdio -> FatFs |
+|---|---|---|---|
+| Castlevania X | 2.24 | **5.06** | 88.1 -> 72.8 |
+| kinst2 | 1.70 | **2.54** | 61.9 -> 42.8 |
+| Ikaruga | 8.34 | **11.58** | 42.5 -> 20.1 |
+| Shadowrun | 1.58 | **2.04** | 35.1 -> 16.4 |
+| Bonk III | 2.03 | **2.31** | 43.5 -> 35.3 |
+| **aggregate** | **2.47** | **3.37 MB/s** | 60.5 s -> 44.4 s |
+
+**Anyone running libchdr on ESP-IDF over FATFS should implement
+`core_file_callbacks` over `f_read` rather than `fopen`/`fread`.** It is worth
+more than every change in the library measured here put together. Select it in
+this benchmark with `-DBENCH_FATFS_BACKEND=1`.
+
+Halving the SD clock to 20MHz costs only 13% (2.05 vs 2.30 MB/s), so the bus
+is not the constraint either.
+
+With I/O no longer dominant the balance shifts: Shadowrun and Ikaruga become
+84% and 80% CPU, so anything further has to come from decode or from avoiding
+decode, not from storage.
+
+### Read-ahead: measured, and it does not pay here
+
+A caller-budgeted read-ahead window (`chd_set_cache_budget()`, 0 by default)
+cuts `fread()` calls 6-16x on real files. It bought **1.2%** of throughput and
+made p99 hunk latency up to **22x worse**, because a refill transfers the whole
+window rather than one hunk. Castlevania X, the most I/O-bound file and the one
+it should have helped most, regressed from 2.24 to 2.03 MB/s.
+
+The premise was wrong: transaction count is not the cost. That is visible
+directly in the table above - throughput is flat across a 32x range of request
+sizes, so the path is bandwidth-bound in software, not transaction-bound. The
+feature is kept default-off because the mechanism is sound where per-call cost
+genuinely dominates, but it should not be enabled on this evidence.
+
 ## Storage, not decode, is the bottleneck
 
 Per-file attribution (timing inside the storage callbacks, which are the

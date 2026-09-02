@@ -55,25 +55,28 @@ Two corpora are run back to back: the flash-embedded synthetic one (below)
 and a real SD card holding 128 CHDs from a 43GB retro ROM set, read through
 the real FATFS/SDMMC stack - the actual ESP32-P4-NANO deployment path.
 
-**Flash corpus: 20/24 files** decode and CRC-verify correctly
-(`VERIFY_BLOCK_CRC=1`). The 4 failures are all AVHuff, and all are RAM
-headroom, not decode (see below).
+This build sets **`LOWRAM_TARGET=1`**, which turns out to matter enormously
+on this class of target - see "LOWRAM_TARGET is not optional here" below.
 
-**SD corpus: 31/128 files**, with **zero decompression errors**:
+**Flash corpus: 24/24 files** decode and CRC-verify correctly
+(`VERIFY_BLOCK_CRC=1`), AVHuff included.
+
+**SD corpus: 112/128 files** - i.e. **every valid file in the set**:
 
 | outcome | files | what it is |
 |---|---|---|
-| decoded + CRC-verified | 31 | |
-| `OPEN FAILED: out of memory` | 76 | RAM wall - large CHDs' rawmap + codec state vs ~560KB SRAM |
-| `OPEN FAILED: invalid file` / `read error` | 16 | naomi GD-ROM parent/child sets - **fail identically on desktop x86-64**, corpus artifacts, not a target issue |
-| `READ FAILED: out of memory` | 3 | drflac's per-hunk allocation, see below |
-| harness dest-buffer `malloc` failed | 2 | AVHuff, see below |
+| decoded + CRC-verified | 112 | all 112 non-broken CHDs on the card |
+| `OPEN FAILED: invalid file` | 13 | **0-byte files** in the source ROM set |
+| `OPEN FAILED: read error` | 3 | **truncated files** - header's `mapoffset` points past EOF |
 
-Every remaining failure is a RAM-capacity limit or a corpus artifact; none
-is a decode defect. One reset in the whole run (the initial power-on).
+Zero decompression errors, zero OOM, one reset in the whole run (the
+initial power-on). The 16 failures are broken files, not a target
+limitation: they fail identically on desktop x86-64, and libchdr rejects
+them with the correct error. Verified directly rather than assumed -
+`stat` shows 13 at size 0, and the other 3 have a `mapoffset` beyond their
+own file length.
 
-Representative throughput (400MHz, `CHDR_LOWRAM_TARGET=OFF` - full per-hunk
-map materialized at open, no checkpointed re-decode):
+Representative throughput (400MHz):
 
 | file | codec | hunkbytes | out MB/s |
 |---|---|---|---|
@@ -86,31 +89,63 @@ map materialized at open, no checkpointed re-decode):
 | hd_huff | huffman | 4096 | 3.9 |
 | real_Hawiian_Island_Girls (147 real CD hunks) | mixed | 19584 | 2.3 |
 
-Before/after the ROM-collision fix described below, same board, same card:
+Same board, same card, across the two changes that mattered:
 
-| | flash corpus | SD corpus | decompression errors |
-|---|---|---|---|
-| before | 17/24, 4.78 MB out | 18/128 | 16 |
-| after | 20/24, 10.63 MB out | 31/128 | **0** |
+| | flash corpus | SD corpus | decompression errors | OOM |
+|---|---|---|---|---|
+| baseline | 17/24, 4.78 MB out | 18/128 | 16 | 81 |
+| + ROM-collision fix | 20/24, 10.63 MB out | 31/128 | **0** | 81 |
+| + `LOWRAM_TARGET=1` | **24/24**, 14.16 MB out | **112/128** | **0** | **0** |
 
-Read the two SD rows carefully: the "before" run was uncapped, the "after"
-run caps each file at `SD_MAX_HUNKS_PER_FILE` (600). The cap was added
-*because* of the fix - files that used to bail out at hunk 0 now decode in
-full, and an uncapped 128-file sweep of a 43GB set runs for hours. A cap
-can only ever hide failures **past** hunk 600, and all 16 pre-fix failures
-occurred at hunks 0-272, so it cannot be manufacturing the "0 decompression
-errors" result. The flash corpus is uncapped in both rows and is the
-like-for-like comparison; it also independently went 17/24 -> 20/24 with
-2.2x the bytes decoded.
+Read the SD rows carefully: the baseline run was uncapped, the later two
+cap each file at `SD_MAX_HUNKS_PER_FILE` (600). The cap was added *because*
+of the fix - files that used to bail out at hunk 0 now decode in full, and
+an uncapped 128-file sweep of a 43GB set runs for hours. A cap can only
+ever hide failures **past** hunk 600, and all 16 pre-fix failures occurred
+at hunks 0-272, so it cannot be manufacturing the "0 decompression errors"
+result. The flash corpus is uncapped in all three rows and is the
+like-for-like comparison.
+
+## `LOWRAM_TARGET` is not optional here
+
+With `LOWRAM_TARGET=0` this board looks far more limited than it is: 76 of
+128 SD files failed at `chd_open()` with `CHDERR_OUT_OF_MEMORY`, plus 3
+CD-FLAC and 2 AVHuff failures further in. The boundary was sharp - the
+largest file that opened had a 164KB rawmap, and the smallest that failed
+needed 176KB, against 582KB free / 524KB largest block. Sizes ran to a
+3.1MB rawmap, which cannot fit in this part's SRAM at all under an eager
+map.
+
+`LOWRAM_TARGET=1` takes **all** of that to zero: lazy CHDv5 map decode,
+`compressed` grown on demand rather than to the worst case, and codec
+`init()` deferred until a hunk actually needs that slot. The last one also
+resolves the AVHuff and CD-FLAC failures as a side effect - a CHDv5 header
+lists up to 4 candidate codecs and an eager build pays for all of them at
+once, so deferring means AVHuff's ~500KB working set and drflac's ~40KB
+per-hunk buffer are no longer competing with dictionaries that hunk never
+uses.
+
+**It is close to free.** Across the 20 flash-corpus files that pass in both
+configurations (uncapped, identical content), total decode time is 3826ms
+vs 3822ms - 1.00x. The three real CD titles (762-1490ms each, where the
+measurement is least noisy) are 1.00x individually. Per-file spread is
+within about +/-10% and confined to sub-20ms files where noise dominates.
+
+Treat `LOWRAM_TARGET=1` as the default for any target in this memory class,
+not as a fallback for when something fails.
 
 ## FLAC: `drflac` is re-allocated once per hunk
 
-Three pcenginecd titles fail with `CHDERR_OUT_OF_MEMORY` at the first
-CD-FLAC hunk. They are exactly the three largest files in the corpus by
-hunk count (11055, 11271, 11825); the largest passing file is 7312 - a
-clean monotone boundary, which is the signature of a headroom wall rather
-than a data-dependent decode bug. All three decode fully on desktop, in
-both LP64 and ILP32 (`gcc -m32`, so `DRFLAC_64BIT` isn't the difference).
+**No longer causes failures** under `LOWRAM_TARGET=1` - kept because the
+underlying inefficiency is real and the error-reporting fix stands.
+
+With `LOWRAM_TARGET=0`, three pcenginecd titles failed with
+`CHDERR_OUT_OF_MEMORY` at the first CD-FLAC hunk. They were exactly the
+three largest files in the corpus by hunk count (11055, 11271, 11825)
+while the largest passing file was 7312 - a clean monotone boundary, which
+is the signature of a headroom wall rather than a data-dependent decode
+bug. All three decode fully on desktop, in both LP64 and ILP32 (`gcc
+-m32`, so `DRFLAC_64BIT` isn't the difference).
 
 The mechanism: `flac_decoder_reset()` calls `drflac_open_with_metadata()`
 *per hunk*, which allocates a fresh decoder plus a decoded-sample buffer
@@ -261,8 +296,16 @@ investigation several days.
 
 ## AVHuff RAM headroom
 
-All 4 AVHuff corpus files fail with `malloc(219660)`/`malloc(223668)
-failed` despite ~587KB heap reported free moments earlier.
+**All 4 AVHuff files pass under `LOWRAM_TARGET=1`.** The working-set
+figures below still hold and still argue for the streaming redesign - what
+changed is that deferring codec `init()` stops AVHuff's state from being
+allocated alongside the three other codecs a CHDv5 header may list, which
+is enough headroom on this part. Read this section as "why AVHuff is tight
+even when it works", not as a blocker.
+
+With `LOWRAM_TARGET=0`, all 4 AVHuff corpus files failed with
+`malloc(219660)`/`malloc(223668) failed` despite ~587KB heap reported free
+moments earlier.
 `heap_caps_print_heap_info()` at the failure point shows the real number:
 only ~78-82KB actually free, because `chd_open()` on an AVHuff CHD
 allocates ~500-530KB of internal codec working state (previous-frame

@@ -55,6 +55,11 @@ if (WITH_SYSTEM_ZLIB)
 else()
   if(NOT TARGET miniz)
     add_subdirectory(deps/miniz-3.1.2 EXCLUDE_FROM_ALL)
+    # ESP ROMs export an older miniz that would otherwise capture this one
+    # at link time; applied here rather than inside deps/ so a miniz bump
+    # can't drop it. No-op off ESP-IDF.
+    include(${CMAKE_CURRENT_LIST_DIR}/cmake/EspRomMinizWorkaround.cmake)
+    libchdr_apply_esp_rom_miniz_workaround(miniz)
   endif()
   list(APPEND CHDR_LIBS miniz)
 endif()

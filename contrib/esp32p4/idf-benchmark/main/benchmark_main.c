@@ -741,7 +741,7 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 				i, nhunks,
 				(double)(now - prog_t) / 1000.0 / BENCH_PROGRESS_EVERY,
 				(double)(io_now - prog_io) / 1000.0 / BENCH_PROGRESS_EVERY,
-				(int)((heap_before - heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT)) / 1024));
+				(int)((heap_at_entry - heap_caps_get_free_size(MALLOC_CAP_DEFAULT)) / 1024));
 			prog_t = now; prog_io = io_now;
 		}
 #endif

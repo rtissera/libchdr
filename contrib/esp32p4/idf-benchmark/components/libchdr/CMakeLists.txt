@@ -14,6 +14,10 @@
 # libchdr's own multi-target dependency setup (WITH_SYSTEM_ZLIB/ZSTD, shared
 # lib, install rules, etc.) - none of that applies to a firmware image.
 
+if(NOT DEFINED LOWRAM_TARGET_VAL)
+	set(LOWRAM_TARGET_VAL 1)
+endif()
+
 set(LIBCHDR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 
 idf_component_register(
@@ -44,7 +48,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
 	WANT_RAW_DATA_SECTOR=1
 	WANT_SUBCODE=1
 	VERIFY_BLOCK_CRC=1
-	LOWRAM_TARGET=1
+	LOWRAM_TARGET=${LOWRAM_TARGET_VAL}
 	MINIZ_NO_ARCHIVE_APIS
 	MINIZ_NO_DEFLATE_APIS
 	MINIZ_NO_STDIO
@@ -81,3 +85,7 @@ set_source_files_properties(
 # CMake, so it applies the same renames directly.
 include("${LIBCHDR_ROOT}/cmake/EspRomMinizWorkaround.cmake")
 libchdr_apply_esp_rom_miniz_workaround(${COMPONENT_LIB})
+
+if(CHDR_PROFILE_CDFL)
+	target_compile_definitions(${COMPONENT_LIB} PRIVATE CHDR_PROFILE_CDFL=1)
+endif()

@@ -29,6 +29,7 @@
 #include "esp_heap_caps_init.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
+#include "ff.h"
 #include "driver/sdmmc_host.h"
 #if SOC_SDMMC_IO_POWER_EXTERNAL
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
@@ -52,6 +53,13 @@
 #define SD_PIN_D3  42
 #define SD_LDO_CHAN 4
 #define SD_MOUNT_POINT "/sdcard"
+
+/* SD bus clock. ESP-IDF defaults to SDMMC_FREQ_DEFAULT (20MHz) when
+ * max_freq_khz is left unset, which is what every measurement before the
+ * bottleneck sweep used. SDMMC_FREQ_HIGHSPEED is 40MHz. */
+#ifndef SD_FREQ_KHZ
+#define SD_FREQ_KHZ SDMMC_FREQ_DEFAULT
+#endif
 
 /* ---- in-memory core_file backend (chd_open_core_file_callbacks) ---- */
 
@@ -115,9 +123,39 @@ static uint64_t sdfile_fsize(void *argp)
 	return (uint64_t)sz;
 }
 
+/* Bottleneck attribution without touching libchdr: these callbacks are the
+ * only path from the decoder to the card, so accounting here splits a hunk's
+ * wall time into "waiting on SD" and "everything else" (decode + CRC + map)
+ * exactly, with no guesswork and no instrumentation inside the library. */
+static struct {
+	uint64_t read_us, seek_us;
+	uint64_t read_bytes;
+	uint64_t reads, seeks, seeks_elided;
+	int64_t  pos;          /* our idea of the current file offset */
+	int      pos_valid;
+} g_io;
+
+static void io_reset(void) { memset(&g_io, 0, sizeof(g_io)); }
+
+/* SEEK_ELISION: libchdr issues core_fseek + core_fread for every hunk
+ * unconditionally. During a sequential sweep the file is very often already
+ * at the requested offset, and on FATFS an f_lseek is not free - it can walk
+ * the cluster chain. Skipping the call when the position already matches is
+ * three lines and costs nothing. Measured because the Pass A attribution
+ * showed seek time equalling or exceeding read time on every large file. */
+#ifndef SEEK_ELISION
+#define SEEK_ELISION 0
+#endif
+
 static size_t sdfile_fread(void *ptr, size_t size, size_t nmemb, void *argp)
 {
-	return fread(ptr, size, nmemb, (FILE *)argp);
+	int64_t t0 = esp_timer_get_time();
+	size_t n = fread(ptr, size, nmemb, (FILE *)argp);
+	g_io.read_us += (uint64_t)(esp_timer_get_time() - t0);
+	g_io.read_bytes += (uint64_t)n * size;
+	g_io.reads++;
+	if (g_io.pos_valid) g_io.pos += (int64_t)(n * size);
+	return n;
 }
 
 static int sdfile_fclose(void *argp)
@@ -127,7 +165,20 @@ static int sdfile_fclose(void *argp)
 
 static int sdfile_fseek(void *argp, int64_t offset, int whence)
 {
-	return fseek((FILE *)argp, (long)offset, whence);
+	int64_t t0, r;
+#if SEEK_ELISION
+	if (whence == SEEK_SET && g_io.pos_valid && g_io.pos == offset) {
+		g_io.seeks_elided++;
+		return 0;
+	}
+#endif
+	t0 = esp_timer_get_time();
+	r = fseek((FILE *)argp, (long)offset, whence);
+	g_io.seek_us += (uint64_t)(esp_timer_get_time() - t0);
+	g_io.seeks++;
+	if (r == 0 && whence == SEEK_SET) { g_io.pos = offset; g_io.pos_valid = 1; }
+	else g_io.pos_valid = 0;
+	return (int)r;
 }
 
 static const core_file_callbacks sdfile_callbacks = {
@@ -153,6 +204,7 @@ static sdmmc_card_t *mount_sdcard(void)
 
 	sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 	host.slot = SDMMC_HOST_SLOT_0;
+	host.max_freq_khz = SD_FREQ_KHZ;
 
 #if SOC_SDMMC_IO_POWER_EXTERNAL
 	sd_pwr_ctrl_ldo_config_t ldo_config = { .ldo_chan_id = SD_LDO_CHAN };
@@ -191,14 +243,154 @@ static sdmmc_card_t *mount_sdcard(void)
 #define SD_MAX_FILES 128
 #define SD_MAX_DEPTH 6
 
-/* Per-file hunk cap for the SD sweep (0 = read every hunk). A real 43GB ROM
- * set has single titles of 20k+ hunks; reading all of them uncapped is an
- * hours-long run. 600 hunks/file keeps a full 128-file sweep to minutes while
- * still decoding a representative slice of every title. */
-#define SD_MAX_HUNKS_PER_FILE 600
+/* BENCH_MODE_LEVER: the bottleneck/headroom sweep. Same harness, but a
+ * 4-file codec-representative subset with a hunk cap, so one build+flash+run
+ * cycle is ~2 minutes and several toolchain/driver configurations can be
+ * compared in one sitting. Relative numbers are what matter here, so coverage
+ * is deliberately traded for turnaround. */
+#ifndef BENCH_MODE_LEVER
+#define BENCH_MODE_LEVER 0
+#endif
+
+/* Per-file hunk cap for the SD sweep (0 = read every hunk). A full uncapped
+ * sweep of all 292 valid CHDs on the card is ~151GB decompressed, ~24h. Pass A
+ * instead runs uncapped over the characterized sample below, ~6.8GB. */
+#ifdef BENCH_HUNK_CAP
+#define SD_MAX_HUNKS_PER_FILE BENCH_HUNK_CAP
+#elif BENCH_MODE_LEVER
+#define SD_MAX_HUNKS_PER_FILE 3000
+#else
+#define SD_MAX_HUNKS_PER_FILE 0
+#endif
 
 static uint32_t g_max_hunks = 0;
 
+#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+/* BENCH_PROGRESS_EVERY: emit a progress line every N hunks. Off by default.
+ * Without it a stalled run is indistinguishable from a merely slow one - the
+ * board just stops printing, and "hung" vs "still going, 40x slower than it
+ * started" are completely different diagnoses. With it, the slope of ms/hunk
+ * over the file separates a driver stall (flat, then nothing) from map-window
+ * thrashing (progressively degrading). */
+#ifndef BENCH_PROGRESS_EVERY
+#define BENCH_PROGRESS_EVERY 0
+#endif
+
+/* ---- filesystem geometry / fragmentation ----
+ *
+ * Whether FATFS_USE_FASTSEEK does anything at all depends on how many
+ * contiguous cluster runs a file occupies: the CLMT buffer is fixed size
+ * (CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE, 64 DWORDs by default = ~31 runs) and
+ * ESP-IDF silently falls back to the slow path when a file needs more, with
+ * no error and no log line. So measure it rather than assume.
+ *
+ * f_lseek(CREATE_LINKMAP) writes the *required* table size into cltbl[0] even
+ * when it fails with FR_NOT_ENOUGH_CORE, which is exactly the number wanted.
+ * Table layout is [size][n0][c0][n1][c1]... so runs = (items - 1) / 2. */
+#ifndef BENCH_FSINFO
+#define BENCH_FSINFO 0
+#endif
+
+#if BENCH_FSINFO
+#define FSINFO_CLMT_WORDS 8192
+static void fs_report(const char *const *paths, size_t n)
+{
+	DWORD nclust = 0;
+	FATFS *fs = NULL;
+	if (f_getfree("", &nclust, &fs) == FR_OK && fs) {
+		printf("FS: cluster = %u sectors = %u bytes | free %lu clusters (%.2f GB)\n",
+			(unsigned)fs->csize, (unsigned)fs->csize * 512,
+			(unsigned long)nclust, (double)nclust * fs->csize * 512 / 1e9);
+	} else {
+		printf("FS: f_getfree failed\n");
+	}
+
+	DWORD *tbl = malloc(sizeof(DWORD) * FSINFO_CLMT_WORDS);
+	if (!tbl) { printf("FS: no memory for CLMT probe\n"); return; }
+
+	for (size_t i = 0; i < n; i++) {
+		const char *vfs = paths[i];
+		const char *ffpath = vfs;
+		if (strncmp(ffpath, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0)
+			ffpath += strlen(SD_MOUNT_POINT);   /* FatFs sees the path without the VFS prefix */
+		FIL fp;
+		if (f_open(&fp, ffpath, FA_READ) != FR_OK) {
+			printf("  %-52s f_open failed\n", ffpath);
+			continue;
+		}
+		fp.cltbl = tbl;
+		tbl[0] = FSINFO_CLMT_WORDS;
+		FRESULT r = f_lseek(&fp, CREATE_LINKMAP);
+		DWORD items = tbl[0];
+		DWORD runs = items > 1 ? (items - 1) / 2 : 0;
+		printf("  %-52s %8llu KB  %5lu fragments%s\n",
+			ffpath, (unsigned long long)(f_size(&fp) / 1024), (unsigned long)runs,
+			(r == FR_NOT_ENOUGH_CORE) ? "  (EXCEEDS default 64-word CLMT -> fastseek silently disabled)"
+			: (r != FR_OK ? "  (linkmap failed)" : ""));
+		fp.cltbl = NULL;
+		f_close(&fp);
+	}
+	free(tbl);
+}
+#endif
+
+/* ---- Pass A sample ----
+ *
+ * Picked by characterizing all 292 valid CHDs on the card (see
+ * tools/characterize.c) and then covering every axis that actually varies,
+ * rather than taking "a few files per system" and hoping. Between them these
+ * 14 cover:
+ *   geometry   all 5 hunkbytes/units-per-hunk combinations in the corpus
+ *              (19584/8, 4096/8, 9792/4, 2448/1, 4096/2)
+ *   codecs     all 11 selectors seen anywhere: cdlz cdzl cdfl cdzs zlib lzma
+ *              huff flac zstd, plus uncompressed and self-referencing hunks
+ *   codec mix  files using 1, 2, 3 and 4 distinct codecs
+ *   tracks     0, 1, 2, 3, 13, 17 and 96 tracks
+ *   size       2MB to 1.25GB logical
+ *   systems    all 7 present on the card
+ *
+ * Two entries are deliberately non-obvious: Bonk III is the only 1-unit-per-
+ * hunk file in the corpus, so it is the control for the read-amplification
+ * sweep (no amplification is possible), and Shadowrun is the most cdzl-heavy
+ * file at 58.7% - cdzl being the codec the ESP ROM miniz collision broke, so
+ * it is worth keeping permanently in the regression path. */
+#define SD_USE_SAMPLE 1
+
+/* Pass B is cheap (a few minutes) but only meaningful on the sample */
+#define PASS_B_ENABLE (!BENCH_MODE_LEVER)
+
+#if defined(BENCH_ONE_FILE)
+/* single-file bisect mode, for chasing a hang down to one configuration */
+static const char *const g_sd_sample[] = { BENCH_ONE_FILE };
+#elif BENCH_MODE_LEVER
+static const char *const g_sd_sample[] = {
+	"/sdcard/roms/segacd/Shadowrun (J).chd",                    /* cdzl 58.7% */
+	"/sdcard/roms/saturn/SS-parodius-sexy.chd",                 /* cdlz 93.6% */
+	"/sdcard/roms/pcenginecd/Insanity (USA) (Unl).cue.chd",     /* cdfl 79.0% */
+	"/sdcard/roms/mame/kinst2/kinst2.chd",                      /* lzma+zlib+huff, 4096B hunks */
+};
+#else
+static const char *const g_sd_sample[] = {
+	/* system      geometry  ncodec  tracks  dominant mix */
+	"/sdcard/roms/dreamcast/Ikaruga (Japan).chd",                          /* 19584/8  2  3   cdzs 92.9% */
+	"/sdcard/roms/mame/kinst2/kinst2.chd",                                 /*  4096/8  4  0   lzma+zlib+huff+flac */
+	"/sdcard/roms/mame/simpbowl/simpbowl.chd",                             /*  9792/4  3  1   cdlz 55.6% cdzl 36.8% */
+	"/sdcard/roms/naomi/vathlete/gds-0019.chd",                            /* 19584/8  3  3   cdlz 88.6%, largest */
+	"/sdcard/roms/pcenginecd/Bonk III - Bonk's Big Adventure (USA).chd",   /*  2448/1  2 17   cdfl 93.6%, no amplification */
+	"/sdcard/roms/pcenginecd/Hawiian Island Girls (USA) (Unl).cue.chd",    /* 19584/8  1  1   cdlz 100%, tiny */
+	"/sdcard/roms/pcenginecd/Insanity (USA) (Unl).cue.chd",                /* 19584/8  3 13   cdfl 79.0% */
+	"/sdcard/roms/pcenginecd/Pyramid Plunder (USA) (Unl).cue.chd",         /* 19584/8  2  1   cdlz 97.6%, smallest */
+	"/sdcard/roms/psp/Castlevania X.chd",                                  /*  4096/2  2  0   zstd 35.6% uncomp 34.8% */
+	"/sdcard/roms/saturn/SS-parodius-sexy.chd",                            /* 19584/8  3  2   cdlz 93.6% */
+	"/sdcard/roms/segacd/Cadillacs & Dinosaurs - The Second Cataclysm (U).chd", /* 19584/8 1 2 cdlz 100% */
+	"/sdcard/roms/segacd/Sensible Soccer (E) (Demo).chd",                  /* 19584/8  3 96   cdfl 64.6%, most tracks */
+	"/sdcard/roms/segacd/Shadowrun (J).chd",                               /* 19584/8  3  3   cdzl 58.7% */
+	"/sdcard/roms/segacd/Surgical Strike (Brazil) (32X CD).chd",           /* 19584/8  3  3   cdlz 90.6% */
+};
+#endif
+
+__attribute__((unused))
 static int sd_scan_dir(const char *dir, char **out, int count, int depth)
 {
 	if (depth > SD_MAX_DEPTH || count >= SD_MAX_FILES)
@@ -243,6 +435,218 @@ static const corpus_entry g_corpus[] = {
 #include "embed_list.inc"
 };
 
+#ifdef CHDR_PROFILE_CDFL
+/* clock for libchdr's cdfl stage profiler (see src/libchdr_codec_cdfl.c) */
+int64_t chdr_prof_now_us(void) { return esp_timer_get_time(); }
+extern uint64_t chdr_prof_flac_reset_us, chdr_prof_flac_decode_us,
+                chdr_prof_subcode_us, chdr_prof_cdfl_hunks;
+static void prof_reset(void)
+{
+	chdr_prof_flac_reset_us = chdr_prof_flac_decode_us = 0;
+	chdr_prof_subcode_us = chdr_prof_cdfl_hunks = 0;
+}
+static void prof_print(void)
+{
+	uint64_t n = chdr_prof_cdfl_hunks;
+	uint64_t tot = chdr_prof_flac_reset_us + chdr_prof_flac_decode_us + chdr_prof_subcode_us;
+	if (!n || !tot) return;
+	printf("  cdfl stages over %" PRIu64 " hunks: reset %5.1f%% (%.3f ms/hunk)  "
+	       "decode %5.1f%% (%.3f ms/hunk)  subcode %5.1f%% (%.3f ms/hunk)\n",
+		n,
+		100.0 * chdr_prof_flac_reset_us / tot,  chdr_prof_flac_reset_us / 1000.0 / n,
+		100.0 * chdr_prof_flac_decode_us / tot, chdr_prof_flac_decode_us / 1000.0 / n,
+		100.0 * chdr_prof_subcode_us / tot,     chdr_prof_subcode_us / 1000.0 / n);
+}
+#else
+static void prof_reset(void) {}
+static void prof_print(void) {}
+#endif
+
+/* ---- latency histogram ----
+ *
+ * A mean hunk-decode time is close to useless for judging whether a CD read
+ * will glitch audio - that is a tail property. Keeping every sample is not an
+ * option either (271328 hunks in one corpus file), so accumulate into a
+ * fixed-size log-scale histogram and read percentiles back off it.
+ *
+ * Bucket index packs 4 sub-buckets per octave: (log2(us) << 2) | top 2
+ * mantissa bits. That is ~19% worst-case bucket width, which is plenty to
+ * separate a cache-ish hit from a full LZMA hunk decode. */
+#define LAT_SUBBITS 2
+#define LAT_SUB     (1u << LAT_SUBBITS)
+#define LAT_BUCKETS (32 * LAT_SUB)
+
+typedef struct {
+	uint32_t bucket[LAT_BUCKETS];
+	uint64_t count, sum_us, min_us, max_us;
+} lat_hist;
+
+static void lat_init(lat_hist *h)
+{
+	memset(h, 0, sizeof(*h));
+	h->min_us = UINT64_MAX;
+}
+
+static void lat_add(lat_hist *h, uint64_t us)
+{
+	unsigned idx, e;
+	if (us == 0) us = 1;
+	e = 31u - (unsigned)__builtin_clz((uint32_t)(us > 0xFFFFFFFFu ? 0xFFFFFFFFu : us));
+	if (e >= LAT_SUBBITS)
+		idx = (e << LAT_SUBBITS) | (unsigned)((us >> (e - LAT_SUBBITS)) & (LAT_SUB - 1));
+	else
+		idx = (unsigned)us;
+	if (idx >= LAT_BUCKETS) idx = LAT_BUCKETS - 1;
+	h->bucket[idx]++;
+	h->count++;
+	h->sum_us += us;
+	if (us < h->min_us) h->min_us = us;
+	if (us > h->max_us) h->max_us = us;
+}
+
+/* lower edge of a bucket, in us - report the conservative (low) end */
+static uint64_t lat_bucket_us(unsigned idx)
+{
+	unsigned e = idx >> LAT_SUBBITS;
+	if (e < LAT_SUBBITS) return idx;
+	return ((uint64_t)(LAT_SUB | (idx & (LAT_SUB - 1)))) << (e - LAT_SUBBITS);
+}
+
+static uint64_t lat_pct(const lat_hist *h, double p)
+{
+	uint64_t want, seen = 0;
+	unsigned i;
+	if (h->count == 0) return 0;
+	want = (uint64_t)(p * (double)h->count);
+	for (i = 0; i < LAT_BUCKETS; i++) {
+		seen += h->bucket[i];
+		if (seen >= want) return lat_bucket_us(i);
+	}
+	return h->max_us;
+}
+
+static void lat_print(const char *label, const lat_hist *h)
+{
+	if (h->count == 0) { printf("  %-22s (no samples)\n", label); return; }
+	printf("  %-22s n=%-7" PRIu64 " min=%-7" PRIu64 " p50=%-7" PRIu64 " p95=%-8" PRIu64
+	       " p99=%-8" PRIu64 " max=%-8" PRIu64 " mean=%" PRIu64 "  (us)\n",
+		label, h->count, h->min_us, lat_pct(h, 0.50), lat_pct(h, 0.95),
+		lat_pct(h, 0.99), h->max_us, h->sum_us / h->count);
+}
+
+/* ---- Pass B: request-granularity / latency characterization ----
+ *
+ * libchdr's only read entry point is chd_read(chd, hunknum, buf) - there is no
+ * sub-hunk API and no decoded-hunk cache (file_cache precaches the whole
+ * *compressed* file, hopeless for a 500MB CHD here; v5_resume_cache is a
+ * sequential map/codec fast path, not a data cache). So a caller asking for N
+ * units must decode every hunk those units land in and slice.
+ *
+ * That means "latency vs request size" is really *read amplification*: at 8
+ * units per hunk a 1-unit request costs a full hunk, i.e. 8x the bytes it
+ * wanted. This measures what that actually costs in wall time, and how much
+ * worse it gets when the request is not hunk-aligned (16 units at unit offset
+ * 1 spans 3 hunks, not 2).
+ *
+ * Random vs sequential is measured alongside because v5_resume_cache only
+ * helps sequential access, and nothing has ever quantified what it is worth. */
+
+#define PASSB_SAMPLES 120
+
+static uint32_t rnd_state = 0x1234567u;
+static uint32_t rnd_next(void)
+{
+	rnd_state ^= rnd_state << 13;
+	rnd_state ^= rnd_state >> 17;
+	rnd_state ^= rnd_state << 5;
+	return rnd_state;
+}
+
+__attribute__((unused))
+static void pass_b_file(const char *name)
+{
+	static const uint32_t sizes[] = { 1, 2, 4, 8, 16 };
+	FILE *f = fopen(name, "rb");
+	chd_file *chd = NULL;
+	if (!f) { printf("  %-40s fopen FAILED\n", name); return; }
+	if (chd_open_core_file_callbacks(&sdfile_callbacks, f, CHD_OPEN_READ, NULL, &chd) != CHDERR_NONE) {
+		printf("  %-40s OPEN FAILED\n", name);
+		return;
+	}
+	const chd_header *h = chd_get_header(chd);
+	uint32_t uph = h->unitbytes ? h->hunkbytes / h->unitbytes : 1;
+	uint8_t *buf = malloc(h->hunkbytes);
+	if (!buf) { printf("  %-40s malloc failed\n", name); chd_close(chd); return; }
+
+	printf("\n  %s\n    hunkbytes=%" PRIu32 " unitbytes=%" PRIu32 " units/hunk=%" PRIu32
+	       " totalhunks=%" PRIu32 "\n", name, h->hunkbytes, h->unitbytes, uph, h->totalhunks);
+
+	/* sequential vs random, whole hunks - isolates v5_resume_cache's value */
+	{
+		lat_hist seq, rnd;
+		lat_init(&seq); lat_init(&rnd);
+		uint32_t n = h->totalhunks < PASSB_SAMPLES ? h->totalhunks : PASSB_SAMPLES;
+		uint32_t base = h->totalhunks > n ? (rnd_next() % (h->totalhunks - n)) : 0;
+		for (uint32_t i = 0; i < n; i++) {
+			int64_t a = esp_timer_get_time();
+			if (chd_read(chd, base + i, buf) != CHDERR_NONE) break;
+			lat_add(&seq, (uint64_t)(esp_timer_get_time() - a));
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			uint32_t hn = rnd_next() % h->totalhunks;
+			int64_t a = esp_timer_get_time();
+			if (chd_read(chd, hn, buf) != CHDERR_NONE) break;
+			lat_add(&rnd, (uint64_t)(esp_timer_get_time() - a));
+		}
+		lat_print("1 hunk sequential", &seq);
+		lat_print("1 hunk random", &rnd);
+		if (seq.count && rnd.count)
+			printf("    -> random/sequential mean = %.2fx\n",
+				(double)(rnd.sum_us / rnd.count) / (double)(seq.sum_us / seq.count));
+	}
+
+	/* request-size sweep, aligned and unaligned, random placement */
+	printf("    %-9s %-9s %8s %8s %9s %9s %7s\n",
+		"units", "align", "hunks/req", "p50(us)", "p95(us)", "max(us)", "amp");
+	for (size_t s = 0; s < ARRAY_LEN(sizes); s++) {
+		for (int unaligned = 0; unaligned < 2; unaligned++) {
+			lat_hist lh;
+			uint64_t touched = 0, delivered = 0, decoded = 0;
+			uint32_t n = PASSB_SAMPLES;
+			lat_init(&lh);
+			for (uint32_t i = 0; i < n; i++) {
+				/* pick a unit offset; unaligned deliberately straddles */
+				uint64_t totalunits = (uint64_t)h->totalhunks * uph;
+				if (totalunits <= sizes[s]) break;
+				uint64_t uoff = rnd_next() % (totalunits - sizes[s]);
+				if (!unaligned) uoff -= uoff % uph;
+				else if (uph > 1 && (uoff % uph) == 0) uoff += 1;
+				uint32_t first = (uint32_t)(uoff / uph);
+				uint32_t last = (uint32_t)((uoff + sizes[s] - 1) / uph);
+				if (last >= h->totalhunks) continue;
+				int64_t a = esp_timer_get_time();
+				int ok = 1;
+				for (uint32_t hn = first; hn <= last; hn++)
+					if (chd_read(chd, hn, buf) != CHDERR_NONE) { ok = 0; break; }
+				if (!ok) break;
+				lat_add(&lh, (uint64_t)(esp_timer_get_time() - a));
+				touched += (last - first + 1);
+				decoded += (uint64_t)(last - first + 1) * h->hunkbytes;
+				delivered += (uint64_t)sizes[s] * h->unitbytes;
+			}
+			if (!lh.count) continue;
+			printf("    %-9" PRIu32 " %-9s %8.2f %8" PRIu64 " %9" PRIu64 " %9" PRIu64 " %6.2fx\n",
+				sizes[s], unaligned ? "unaligned" : "aligned",
+				(double)touched / (double)lh.count,
+				lat_pct(&lh, 0.50), lat_pct(&lh, 0.95), lh.max_us,
+				delivered ? (double)decoded / (double)delivered : 0);
+		}
+	}
+
+	free(buf);
+	chd_close(chd);
+}
+
 /* ---- benchmark driver ---- */
 
 typedef struct {
@@ -259,6 +663,20 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	chd_error err;
 	int64_t t0, t1;
 
+	io_reset();
+	prof_reset();
+	/* Heap accounting. An earlier version of this used
+	 * heap_caps_get_minimum_free_size(), which is the low-water mark *since
+	 * boot* - it never rises again, so after the first corpus file every
+	 * delta read as zero and the whole measurement was silently useless.
+	 * Use free-size deltas instead and track the minimum by sampling during
+	 * the read loop: free_size is a sum of per-region counters, cheap enough
+	 * to poll. What matters for "does this CHD fit on a smaller part" is the
+	 * resident cost of an open file plus its decode working set. */
+	size_t heap_at_entry = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+	size_t heap_after_open = heap_at_entry;
+	size_t heap_min_free = heap_at_entry;
+	size_t largest_min = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
 	t0 = esp_timer_get_time();
 
 	err = chd_open_core_file_callbacks(cb, argp, CHD_OPEN_READ, NULL, &chd);
@@ -276,6 +694,9 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 		 * followed by "assert failed: xQueueSemaphoreTake queue.c:1713"). */
 		return r;
 	}
+
+	heap_after_open = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+	if (heap_after_open < heap_min_free) heap_min_free = heap_after_open;
 
 	const chd_header *header = chd_get_header(chd);
 	unsigned char *buf = malloc(header->hunkbytes);
@@ -298,12 +719,44 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	int capped = 0;
 	if (g_max_hunks != 0 && nhunks > g_max_hunks) { nhunks = g_max_hunks; capped = 1; }
 
+	/* Per-hunk latency comes free here - we are already in the read loop, and
+	 * this is the sequential access pattern, i.e. the one v5_resume_cache's
+	 * fast path is built for. Pass B measures random access against it. */
+	lat_hist seqlat;
+	lat_init(&seqlat);
+
 	int bad = 0;
 	uint32_t bad_hunk = 0;
+#if BENCH_PROGRESS_EVERY
+	int64_t prog_t = esp_timer_get_time();
+	uint64_t prog_io = 0;
+#endif
 	for (uint32_t i = 0; i < nhunks; i++) {
+		int64_t h0, h1;
+#if BENCH_PROGRESS_EVERY
+		if (i && (i % BENCH_PROGRESS_EVERY) == 0) {
+			int64_t now = esp_timer_get_time();
+			uint64_t io_now = g_io.read_us + g_io.seek_us;
+			printf("    ..hunk %" PRIu32 "/%" PRIu32 "  %.3f ms/hunk  io %.3f ms/hunk  heap used %d KB\n",
+				i, nhunks,
+				(double)(now - prog_t) / 1000.0 / BENCH_PROGRESS_EVERY,
+				(double)(io_now - prog_io) / 1000.0 / BENCH_PROGRESS_EVERY,
+				(int)((heap_before - heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT)) / 1024));
+			prog_t = now; prog_io = io_now;
+		}
+#endif
 		memset(buf, 0xAA, header->hunkbytes); /* poison, so a no-op decode is visible */
+		if ((i & 1023) == 0) {
+			size_t f = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+			size_t lb = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+			if (f < heap_min_free) heap_min_free = f;
+			if (lb < largest_min) largest_min = lb;
+		}
+		h0 = esp_timer_get_time();
 		err = chd_read(chd, i, buf);
+		h1 = esp_timer_get_time();
 		if (err != CHDERR_NONE) { bad = 1; bad_hunk = i; break; }
+		lat_add(&seqlat, (uint64_t)(h1 - h0));
 	}
 
 	t1 = esp_timer_get_time();
@@ -335,6 +788,28 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	else
 		printf("%-48s hunks=%-4" PRIu32 " hunkbytes=%-7" PRIu32 " %8.2f ms  in=%6.2f MB/s  out=%7.2f MB/s\n",
 			name, header->totalhunks, header->hunkbytes, secs * 1000.0, in_mbps, out_mbps);
+
+	/* bottleneck split: everything not spent inside the storage callbacks is
+	 * decode + CRC + map work, so this attributes the hunk time exactly */
+	{
+		uint64_t io_us = g_io.read_us + g_io.seek_us;
+		double io_pct = r.elapsed_us ? 100.0 * (double)io_us / (double)r.elapsed_us : 0;
+		printf("  io: %6.2f%% of wall (%" PRIu64 " ms read + %" PRIu64 " ms seek, %"
+		       PRIu64 " reads / %" PRIu64 " seeks (%" PRIu64 " elided), %" PRIu64 " KB, %.2f MB/s while reading)"
+		       "   cpu: %6.2f%%\n",
+			io_pct, g_io.read_us / 1000, g_io.seek_us / 1000, g_io.reads, g_io.seeks, g_io.seeks_elided,
+			g_io.read_bytes / 1024,
+			g_io.read_us ? (g_io.read_bytes / 1e6) / (g_io.read_us / 1e6) : 0,
+			100.0 - io_pct);
+		printf("  heap: open %d KB, peak %d KB (incl. %" PRIu32 " KB dest buf), "
+		       "smallest largest-free-block %d KB\n",
+			(int)((heap_at_entry - heap_after_open) / 1024),
+			(int)((heap_at_entry - heap_min_free) / 1024),
+			header->hunkbytes / 1024,
+			(int)(largest_min / 1024));
+		lat_print("hunk latency (seq)", &seqlat);
+		prof_print();
+	}
 
 	free(buf);
 	chd_close(chd);
@@ -413,8 +888,31 @@ void app_main(void)
 	}
 
 	static char *sd_paths[SD_MAX_FILES];
-	int sd_n = sd_scan_dir(SD_MOUNT_POINT, sd_paths, 0, 0);
+	int sd_n;
+#if SD_USE_SAMPLE
+	sd_n = 0;
+	for (size_t si = 0; si < ARRAY_LEN(g_sd_sample) && sd_n < SD_MAX_FILES; si++) {
+		struct stat st;
+		if (stat(g_sd_sample[si], &st) != 0) {
+			printf("SAMPLE MISSING: %s\n", g_sd_sample[si]);
+			continue;
+		}
+		sd_paths[sd_n++] = strdup(g_sd_sample[si]);
+	}
+	printf("SD: characterized sample, %d of %zu entries present\n", sd_n, ARRAY_LEN(g_sd_sample));
+#else
+	sd_n = sd_scan_dir(SD_MOUNT_POINT, sd_paths, 0, 0);
 	printf("SD: found %d *.chd file(s) under %s\n", sd_n, SD_MOUNT_POINT);
+#endif
+
+#if BENCH_FSINFO
+	printf("\n--- filesystem geometry and fragmentation ---\n");
+	fs_report((const char *const *)sd_paths, (size_t)sd_n);
+#if BENCH_FSINFO > 1
+	printf("\n=== BENCH COMPLETE ===\n");   /* report-only mode */
+	return;
+#endif
+#endif
 
 	g_max_hunks = SD_MAX_HUNKS_PER_FILE;
 	if (g_max_hunks)
@@ -444,7 +942,6 @@ void app_main(void)
 			sd_total_us += r.elapsed_us;
 			sd_total_ok++;
 		}
-		free(sd_paths[i]);
 	}
 
 	double sd_total_secs = sd_total_us / 1e6;
@@ -453,4 +950,20 @@ void app_main(void)
 		sd_total_ok, sd_n, sd_total_in, sd_total_out, sd_total_secs,
 		sd_total_secs > 0 ? (sd_total_in / 1e6) / sd_total_secs : 0,
 		sd_total_secs > 0 ? (sd_total_out / 1e6) / sd_total_secs : 0);
+
+#if PASS_B_ENABLE
+	printf("\n--- Pass B: request granularity, amplification, random vs sequential ---\n");
+	printf("libchdr reads whole hunks only (no sub-hunk API, no decoded-hunk cache),\n"
+	       "so a sub-hunk request costs a full hunk decode. 'amp' is bytes decoded /\n"
+	       "bytes the caller asked for.\n");
+	for (int i = 0; i < sd_n; i++)
+		pass_b_file(sd_paths[i]);
+#endif
+
+	for (int i = 0; i < sd_n; i++)
+		free(sd_paths[i]);
+
+	/* explicit end-of-run marker so the serial capture knows when to stop
+	 * without guessing from the last section's heading */
+	printf("\n=== BENCH COMPLETE ===\n");
 }

@@ -17,6 +17,9 @@
 ***************************************************************************/
 
 #include <string.h>
+#ifdef CHDR_DEBUG_ZLIB
+#include <stdio.h>
+#endif
 
 #include "../include/libchdr/cdrom.h"
 
@@ -458,12 +461,21 @@ chd_error cd_codec_decompress(
 
 	/* reset and decode */
 	decomp_err = base_decompress(base_decompressor, &src[header_bytes], complen_base, &buffer[0], frames * CD_MAX_SECTOR_DATA);
-	if (decomp_err != CHDERR_NONE)
+	if (decomp_err != CHDERR_NONE) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("cd_codec_decompress: stage=base complen_base=%u err=%d\n", (unsigned)complen_base, decomp_err);
+#endif
 		return decomp_err;
+	}
 #if WANT_SUBCODE
 	decomp_err = subcode_decompress(subcode_decompressor, &src[header_bytes + complen_base], complen - complen_base - header_bytes, &buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
-	if (decomp_err != CHDERR_NONE)
+	if (decomp_err != CHDERR_NONE) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("cd_codec_decompress: stage=subcode complen_subcode=%u err=%d\n",
+			(unsigned)(complen - complen_base - header_bytes), decomp_err);
+#endif
 		return decomp_err;
+	}
 #endif
 
 	/* reassemble the data */

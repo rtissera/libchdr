@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef CHDR_DEBUG_ZLIB
+#include <stdio.h>
+#endif
 
 static voidpf zlib_fast_alloc(voidpf opaque, zlib_alloc_size items, zlib_alloc_size size);
 static void zlib_fast_free(voidpf opaque, voidpf address);
@@ -79,13 +82,31 @@ chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	data->inflater.avail_out = destlen;
 	data->inflater.total_out = 0;
 	zerr = inflateReset(&data->inflater);
-	if (zerr != Z_OK)
+	if (zerr != Z_OK) {
+#ifdef CHDR_DEBUG_ZLIB
+		printf("zlib_codec_decompress: inflateReset FAILED zerr=%d\n", zerr);
+#endif
 		return CHDERR_DECOMPRESSION_ERROR;
+	}
 
 	/* do it */
 	zerr = inflate(&data->inflater, Z_FINISH);
-	if (data->inflater.total_out != destlen)
+	if (data->inflater.total_out != destlen) {
+#ifdef CHDR_DEBUG_ZLIB
+		/* only dump on the failure path - an unconditional per-call hex
+		 * dump of every compressed block is too slow/UART-heavy to run
+		 * across a real multi-hundred-file corpus (was previously seen to
+		 * destabilize a full run outright). */
+		printf("zlib_codec_decompress: FAILED complen=%u destlen=%u zerr=%d total_out=%u avail_in=%u avail_out=%u data=%p inflater.state=%p src=",
+			(unsigned)complen, (unsigned)destlen, zerr, (unsigned)data->inflater.total_out,
+			(unsigned)data->inflater.avail_in, (unsigned)data->inflater.avail_out,
+			(void*)data, (void*)data->inflater.state);
+		for (uint32_t dbg_i = 0; dbg_i < complen; dbg_i++)
+			printf("%02x", src[dbg_i]);
+		printf("\n");
+#endif
 		return CHDERR_DECOMPRESSION_ERROR;
+	}
 
 	return CHDERR_NONE;
 }

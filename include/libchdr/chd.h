@@ -388,6 +388,34 @@ CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, 
 /* precache underlying file */
 CHD_EXPORT chd_error chd_precache(chd_file *chd);
 
+/* Give libchdr a memory budget, in bytes, to spend on internal caching.
+ *
+ * 0 (the default) disables it entirely and reproduces the historical
+ * behaviour exactly. libchdr deliberately does not choose this number
+ * itself: how much memory is available is a property of the embedding
+ * system - a desktop, an ESP32 with or without PSRAM, an RP2350 - and not
+ * something a library can portably discover.
+ *
+ * Currently spent on a compressed read-ahead window, which collapses the
+ * one-seek-plus-one-read-per-hunk access pattern into far fewer, larger
+ * transfers. That matters when the per-transaction cost of the storage
+ * stack dominates its per-byte cost, which is the usual case for SD/eMMC
+ * behind a filesystem. Sequential reads transfer each byte exactly once
+ * regardless of the budget, so a larger budget trades memory for fewer
+ * transactions and never for redundant I/O.
+ *
+ * May be called at any time on an open file; lowering or zeroing it frees
+ * immediately. Returns CHDERR_OUT_OF_MEMORY if the budget could not be
+ * allocated, in which case caching stays off and the file remains fully
+ * usable. A budget below one hunk is rounded up, since a smaller window
+ * could never serve a read. */
+CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes);
+CHD_EXPORT size_t chd_get_cache_budget(const chd_file *chd);
+
+/* Read-ahead window hit/miss counts since the budget was last set. For
+ * tuning and diagnostics; either pointer may be NULL. */
+CHD_EXPORT void chd_get_cache_stats(const chd_file *chd, uint64_t *hits, uint64_t *misses);
+
 /* close a CHD file */
 CHD_EXPORT void chd_close(chd_file *chd);
 

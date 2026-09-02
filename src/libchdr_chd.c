@@ -328,6 +328,28 @@ struct _chd_file
 
 	uint8_t *					file_cache;		/* cache of underlying file */
 
+	/* Compressed read-ahead. libchdr issues one seek+read per hunk, and
+	 * compressed hunks are small - measured across a 14-CHD sample, 426 to
+	 * 15223 bytes, averaging a few KB - so a large title costs hundreds of
+	 * thousands of transactions whose fixed per-call cost (VFS dispatch,
+	 * filesystem bookkeeping, controller command setup, DMA, interrupt) has
+	 * nothing to do with their size. On an ESP32-P4 reading from SD that
+	 * showed up as under 15% of the available bus bandwidth.
+	 *
+	 * This is only worth doing because hunk payloads turn out to be laid out
+	 * strictly sequentially: across that same sample, 100% of hunks that
+	 * touch the file begin exactly where the previous one ended, in a single
+	 * run spanning the whole file. So one larger read serves many hunks.
+	 *
+	 * Off unless the caller sets a budget - see chd_set_cache_budget(). The
+	 * library deliberately does not size this itself: how much memory is
+	 * available is a property of the embedding system, not of libchdr. */
+	uint8_t *					ra_buf;			/* NULL = disabled */
+	size_t						ra_capacity;
+	uint64_t					ra_off;			/* file offset of ra_buf[0] */
+	size_t						ra_valid;		/* bytes currently held */
+	uint64_t					ra_hits, ra_misses;
+
 	/* Decoded-hunk cache, used only by COMPRESSION_SELF back-references.
 	 * A self-referencing hunk means "identical to hunk N", and the read path
 	 * previously recursed into a full re-read *and* re-decode of hunk N every
@@ -2013,6 +2035,57 @@ cleanup:
 }
 
 /*-------------------------------------------------
+    chd_set_cache_budget - give libchdr a memory
+    budget to spend on internal caching, or 0 to
+    disable it (the default)
+-------------------------------------------------*/
+
+CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes)
+{
+	uint8_t *buf;
+
+	if (chd == NULL)
+		return CHDERR_INVALID_PARAMETER;
+
+	/* releasing is always possible */
+	if (chd->ra_buf != NULL)
+	{
+		free(chd->ra_buf);
+		chd->ra_buf = NULL;
+		chd->ra_capacity = chd->ra_valid = 0;
+		chd->ra_off = 0;
+	}
+	if (bytes == 0)
+		return CHDERR_NONE;
+
+	/* a window smaller than one hunk can never serve a read */
+	if (bytes < chd->header.hunkbytes)
+		bytes = chd->header.hunkbytes;
+
+	buf = (uint8_t *)malloc(bytes);
+	if (buf == NULL)
+		return CHDERR_OUT_OF_MEMORY;   /* caching off; the file stays usable */
+
+	chd->ra_buf = buf;
+	chd->ra_capacity = bytes;
+	chd->ra_valid = 0;
+	chd->ra_off = 0;
+	chd->ra_hits = chd->ra_misses = 0;
+	return CHDERR_NONE;
+}
+
+CHD_EXPORT size_t chd_get_cache_budget(const chd_file *chd)
+{
+	return (chd != NULL) ? chd->ra_capacity : 0;
+}
+
+CHD_EXPORT void chd_get_cache_stats(const chd_file *chd, uint64_t *hits, uint64_t *misses)
+{
+	if (hits != NULL)   *hits   = (chd != NULL) ? chd->ra_hits : 0;
+	if (misses != NULL) *misses = (chd != NULL) ? chd->ra_misses : 0;
+}
+
+/*-------------------------------------------------
     chd_precache - precache underlying file in
     memory
 -------------------------------------------------*/
@@ -2202,6 +2275,13 @@ CHD_EXPORT void chd_close(chd_file *chd)
 		core_fclose(&chd->file);
 
 	selfcache_free(chd);
+
+	if (chd->ra_buf != NULL)
+	{
+		free(chd->ra_buf);
+		chd->ra_buf = NULL;
+		chd->ra_capacity = chd->ra_valid = 0;
+	}
 
 	if (chd->file_cache)
 		free(chd->file_cache);
@@ -2719,6 +2799,83 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 		}
 #endif
 
+		/* Serve from the read-ahead window when the caller has given us a
+		 * budget. On a miss, any bytes already held that sit at or after the
+		 * requested offset are kept and slid to the front, so the refill
+		 * reads only what is genuinely new: sequential access therefore
+		 * transfers each byte exactly once, and the window is a pure
+		 * reduction in transaction count rather than a trade against
+		 * re-reading. A window is never used for a hunk larger than the
+		 * window itself. */
+		if (chd->ra_buf != NULL && size <= chd->ra_capacity)
+		{
+			int have = (offset >= chd->ra_off &&
+			            offset + size <= chd->ra_off + chd->ra_valid);
+			/* Only a forward-progressing miss refills the window. A backward
+			 * read - which in practice means a COMPRESSION_SELF reference
+			 * reaching back to an earlier hunk - is served directly and
+			 * leaves the window untouched, so an excursion cannot throw away
+			 * data already prefetched for the sequential stream it will
+			 * return to. Without this the window is evicted and refilled
+			 * around every self-reference, and the same bytes are fetched
+			 * more than once. */
+			if (!have && offset < chd->ra_off)
+			{
+				chd->ra_misses++;
+			}
+			else if (!have)
+			{
+				size_t keep = 0;
+				size_t want;
+				uint64_t fill_at;
+
+				if (offset >= chd->ra_off && offset < chd->ra_off + chd->ra_valid)
+				{
+					keep = (size_t)(chd->ra_off + chd->ra_valid - offset);
+					memmove(chd->ra_buf, chd->ra_buf + (offset - chd->ra_off), keep);
+				}
+				fill_at = offset + keep;
+				want = chd->ra_capacity - keep;
+				if (want > 0 && fill_at < chd->file_size)
+				{
+					uint64_t avail = chd->file_size - fill_at;
+					if (avail > (uint64_t)want)
+						avail = (uint64_t)want;
+					if (seek_and_read(chd, fill_at, chd->ra_buf + keep, (size_t)avail))
+					{
+						chd->ra_off = offset;
+						chd->ra_valid = keep + (size_t)avail;
+						chd->ra_misses++;
+						have = (offset + size <= chd->ra_off + chd->ra_valid);
+					}
+					else
+					{
+						/* a failed refill must not fail the read - drop the
+						 * window and fall through to the direct path */
+						chd->ra_valid = 0;
+						have = 0;
+					}
+				}
+				else
+				{
+					chd->ra_valid = keep;
+					chd->ra_off = offset;
+					have = (size <= keep);
+				}
+			}
+			else
+				chd->ra_hits++;
+
+			if (have)
+			{
+				/* copy out rather than handing back a pointer into the
+				 * window: the caller holds this across the decompress call,
+				 * and a later refill would move the bytes underneath it */
+				memcpy(chd->compressed, chd->ra_buf + (offset - chd->ra_off), size);
+				return chd->compressed;
+			}
+		}
+
 		if (!seek_and_read(chd, offset, chd->compressed, size))
 			return NULL;
 		return chd->compressed;
@@ -2741,6 +2898,18 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
+		/* Uncompressed hunks share the file's sequential layout with the
+		 * compressed ones, so they must consume the same read-ahead window -
+		 * otherwise the window prefetches their bytes and they then read the
+		 * same range again directly, and a file with a meaningful fraction of
+		 * uncompressed hunks transfers noticeably more than it needs to. */
+		if (chd->ra_buf != NULL && offset >= chd->ra_off &&
+		    offset + size <= chd->ra_off + chd->ra_valid)
+		{
+			memcpy(dest, chd->ra_buf + (offset - chd->ra_off), size);
+			chd->ra_hits++;
+			return CHDERR_NONE;
+		}
 		if (!seek_and_read(chd, offset, dest, size))
 			return CHDERR_READ_ERROR;
 	}

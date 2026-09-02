@@ -181,6 +181,79 @@ static int sdfile_fseek(void *argp, int64_t offset, int whence)
 	return (int)r;
 }
 
+/* ---- FatFs-backed core_file, bypassing VFS and newlib stdio ----
+ *
+ * Measured on this board, same card and clock: sdmmc_read_sectors() sustains
+ * 18.96 MB/s, FatFs f_read() 10.58, and fread() through the VFS and newlib
+ * stdio only 2.30. The wrapper above FatFs costs 4.6x.
+ *
+ * libchdr never needs to know: core_file_callbacks already lets the embedder
+ * supply whatever reader it likes, so this is a drop-in replacement for the
+ * stdio backend and requires no change to the library. */
+static uint64_t fffile_fsize(void *argp)
+{
+	return (uint64_t)f_size((FIL *)argp);
+}
+
+static size_t fffile_fread(void *ptr, size_t size, size_t nmemb, void *argp)
+{
+	UINT got = 0;
+	int64_t t0 = esp_timer_get_time();
+	FRESULT r = f_read((FIL *)argp, ptr, (UINT)(size * nmemb), &got);
+	g_io.read_us += (uint64_t)(esp_timer_get_time() - t0);
+	g_io.read_bytes += got;
+	g_io.reads++;
+	if (r != FR_OK) return 0;
+	return size ? (got / size) : 0;
+}
+
+static int fffile_fclose(void *argp)
+{
+	FRESULT r = f_close((FIL *)argp);
+	free(argp);
+	return (r == FR_OK) ? 0 : -1;
+}
+
+static int fffile_fseek(void *argp, int64_t offset, int whence)
+{
+	FIL *fp = (FIL *)argp;
+	FSIZE_t target;
+	int64_t t0;
+	FRESULT r;
+
+	switch (whence) {
+	case SEEK_SET: target = (FSIZE_t)offset; break;
+	case SEEK_CUR: target = f_tell(fp) + (FSIZE_t)offset; break;
+	case SEEK_END: target = f_size(fp) + (FSIZE_t)offset; break;
+	default: return -1;
+	}
+	t0 = esp_timer_get_time();
+	r = f_lseek(fp, target);
+	g_io.seek_us += (uint64_t)(esp_timer_get_time() - t0);
+	g_io.seeks++;
+	return (r == FR_OK) ? 0 : -1;
+}
+
+static const core_file_callbacks fffile_callbacks = {
+	.fsize = fffile_fsize,
+	.fread = fffile_fread,
+	.fclose = fffile_fclose,
+	.fseek = fffile_fseek,
+};
+
+/* opens a FatFs path (the VFS path minus the mount prefix) */
+static FIL *fffile_open(const char *vfs_path)
+{
+	const char *ff = vfs_path;
+	FIL *fp;
+	if (strncmp(ff, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0)
+		ff += strlen(SD_MOUNT_POINT);
+	fp = (FIL *)malloc(sizeof(FIL));
+	if (fp == NULL) return NULL;
+	if (f_open(fp, ff, FA_READ) != FR_OK) { free(fp); return NULL; }
+	return fp;
+}
+
 static const core_file_callbacks sdfile_callbacks = {
 	.fsize = sdfile_fsize,
 	.fread = sdfile_fread,
@@ -294,6 +367,11 @@ static uint32_t g_max_hunks = 0;
 
 #ifndef BENCH_RAWIO
 #define BENCH_RAWIO 0
+#endif
+
+/* Use the FatFs-backed core_file instead of the stdio one. */
+#ifndef BENCH_FATFS_BACKEND
+#define BENCH_FATFS_BACKEND 0
 #endif
 
 /* ---- filesystem geometry / fragmentation ----
@@ -978,6 +1056,38 @@ void app_main(void)
 		}
 	}
 
+	/* Middle layer: FatFs f_read() directly, skipping the VFS and newlib
+	 * stdio that fread() goes through. Three points - sectors, f_read, fread -
+	 * localise the 8.4x loss to one layer instead of "somewhere above the
+	 * driver". */
+	printf("\n--- FatFs f_read, bypassing VFS+stdio ---\n");
+	{
+		static const size_t blks[] = { 4096, 32768, 131072 };
+		const char *vfs = sd_n > 0 ? sd_paths[0] : NULL;
+		const char *ff = vfs;
+		if (ff && strncmp(ff, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0)
+			ff += strlen(SD_MOUNT_POINT);
+		for (size_t i = 0; ff && i < ARRAY_LEN(blks); i++) {
+			uint8_t *buf = malloc(blks[i]);
+			/* FIL embeds a sector buffer and is far too large for app_main's
+			 * frame - a stack-allocated one tripped the stack protector */
+			FIL *fp = malloc(sizeof(FIL));
+			if (!buf || !fp) { free(buf); free(fp); printf("  %6zu KB: malloc failed\n", blks[i]/1024); continue; }
+			if (f_open(fp, ff, FA_READ) != FR_OK) { free(buf); free(fp); printf("  f_open failed\n"); break; }
+			uint64_t total = 0; int64_t t0 = esp_timer_get_time();
+			while (total < 24u*1024*1024) {
+				UINT got = 0;
+				if (f_read(fp, buf, (UINT)blks[i], &got) != FR_OK || got == 0) break;
+				total += got;
+			}
+			int64_t t1 = esp_timer_get_time();
+			double secs = (t1 - t0) / 1e6;
+			printf("  block %6zu KB: %7.2f MB in %6.2f s = %5.2f MB/s\n",
+				blks[i]/1024, total/1e6, secs, secs > 0 ? (total/1e6)/secs : 0);
+			f_close(fp); free(fp); free(buf);
+		}
+	}
+
 	printf("\n--- raw SD read throughput (no libchdr) ---\n");
 	{
 		static const size_t blks[] = { 4096, 16384, 32768, 131072, 524288 };
@@ -1021,13 +1131,25 @@ void app_main(void)
 	int sd_total_ok = 0;
 
 	for (int i = 0; i < sd_n; i++) {
+#if BENCH_FATFS_BACKEND
+		FIL *f = fffile_open(sd_paths[i]);
+		if (!f) {
+			printf("%-56s f_open FAILED\n", sd_paths[i]);
+			continue;
+		}
+#else
 		FILE *f = fopen(sd_paths[i], "rb");
 		if (!f) {
 			printf("%-56s fopen FAILED\n", sd_paths[i]);
 			continue;
 		}
+#endif
 		bool heap_ok_before = heap_caps_check_integrity_all(true);
+#if BENCH_FATFS_BACKEND
+		run_result r = run_one(sd_paths[i], &fffile_callbacks, f, fffile_fsize(f));
+#else
 		run_result r = run_one(sd_paths[i], &sdfile_callbacks, f, sdfile_fsize(f));
+#endif
 		bool heap_ok_after = heap_caps_check_integrity_all(true);
 		if (!heap_ok_before || !heap_ok_after) {
 			printf("  ^^^ heap corruption detected: before=%d after=%d\n", heap_ok_before, heap_ok_after);

@@ -302,3 +302,115 @@ frame.
 Correctness bar used throughout: decoded output byte-identical over **287 CHDs**,
 with `VERIFY_BLOCK_CRC` checking every hunk against chdman's own CRC, plus the
 AVHuff regression suite (4/4).
+
+## End-to-end result on the full corpus
+
+Same 14 SD files, same FatFs + cluster-map + 64 KB read-ahead configuration,
+both uncapped over 7.32 GB of decoded output:
+
+| | time | throughput |
+|---|---|---|
+| before the CPU work on this branch | 2307.0 s | 3.17 MB/s |
+| after ECC SWAR + crc16 slice-by-4 | **1924.7 s** | **3.80 MB/s** |
+
+**1.20x end to end**, 14/14 files OK. Per file, uncapped:
+
+| file | hunks | MB/s | CPU | IO |
+|---|---|---|---|---|
+| Ikaruga | 68,645 | 12.71 | 97.1% | 2.9% |
+| naomi vathlete | 68,645 | 9.55 | - | - |
+| kinst2 | 111,737 | 6.49 | 68.1% | 31.9% |
+| Sensible Soccer | 16,400 | 6.33 | - | - |
+| Insanity | 11,825 | 4.74 | 79.5% | 20.5% |
+| Shadowrun | 13,291 | 3.69 | - | - |
+| Castlevania X | 271,328 | 3.07 | 30.7% | 69.3% |
+| Surgical Strike | 25,707 | 1.87 | - | - |
+| SS-parodius | 17,393 | 1.69 | 84.9% | 15.1% |
+
+Every CD image decodes faster than the drive it shipped on: Ikaruga 69x CD
+(5.8x a Dreamcast GD-ROM), Insanity 25.8x (a 1x PC Engine CD drive),
+SS-parodius 9.2x (4.6x a 2x Saturn drive), Castlevania X 1.7x a PSP UMD.
+
+## Robustness: three latent bugs, all pre-existing on master
+
+Found by fuzzing under ASan+UBSan. None affect well-formed files; all are
+reachable from a malformed one, which matters because CHDs are attacker-supplied.
+
+1. **Signed overflow in the header parser** (149dc57). `get_bigendian_uint32_t`
+   did `base[0] << 24` without casting - uint8_t promotes to int, so any byte
+   >= 0x80 is UB. Real files never hit it because every field read through it
+   is a small count or an ASCII four-char codec tag. The uint48 and uint64
+   readers already cast; this one was inconsistent.
+2. **Unvalidated bit widths from the file** (56273ca). The v5 map header's
+   `lengthbits`/`selfbits`/`parentbits` are raw bytes that become the width
+   argument to `bitstream_read()`. Above 32 they make `bitstream_peek()` shift
+   by a negative amount. Now rejected as `CHDERR_INVALID_FILE` at parse time.
+3. **Shift by 32 refilling an over-consumed bitstream** (598424f). `bits` goes
+   negative after over-consumption, so `24 - bits` reaches 32. Only reachable
+   with `LOWRAM_TARGET=OFF` - the lazy checkpointed map reaches the huffman
+   decoder differently - so fuzzing that covered only the low-RAM path missed
+   it. **Fuzz both map implementations.**
+
+Bar now established, all clean:
+
+- **3412 malformed inputs** (mutations of all 17 seed codecs across header,
+  map-region, whole-file and truncation strategies, plus 131 structure-aware
+  header-field cases) against **both** `LOWRAM_TARGET=ON` and `OFF`, on
+  **both 64-bit and 32-bit** builds.
+- **546 metadata-targeted inputs** including explicit self-referential cycles
+  in the metadata chain, through `chd_get_metadata()`, on both map paths.
+- **API misuse**: NULL handles, out-of-range hunks, cache budget 0/1/1TB,
+  budget toggled mid-stream (output identical), OOM path. No leaks.
+- **Access-order equivalence**: HEAD vs master byte-identical over sequential,
+  reverse, random and scattered-sample orders.
+- **Config matrix**: LOWRAM on/off, system zlib, system zstd and LTO all
+  produce byte-identical output; `WANT_RAW_DATA_SECTOR=OFF` differs as designed.
+- **32-bit vs 64-bit** decode byte-identical.
+- Compiles clean for **Cortex-M33** (68,816 B .text) and **Cortex-M0+**
+  (77,976 B), i.e. both RP2350 cores.
+
+Incidental: no CD image sampled from the corpus has any nonzero subcode, which
+is why `CHDR_WANT_SUBCODE=OFF` is output-identical on them - 96 of every 2448
+bytes is zeros being decompressed and copied.
+
+## Self-reference locality, and why a bigger decoded-hunk cache is not worth it
+
+Castlevania X is 29.2% self-referential over its 271,328 hunks - but only
+**10.0% over the first 2500**, which is why a capped run reads 4.61 MB/s and the
+full disc 3.07. Not a regression; the capped number was unrepresentative.
+
+LRU simulation over the real 79,305-self-reference stream:
+
+| entries | RAM at 4 KB hunks | hit % of self-refs |
+|---|---|---|
+| **1** | **4 KB** | **21.1%** |
+| 16 | 64 KB | 25.3% |
+| 64 | 256 KB | 27.0% |
+| 256 | 1 MB | 31.6% |
+| 4096 | 16 MB | 44.4% |
+| 65536 | 256 MB | 99.7% |
+
+One entry already captures most of the benefit because **24.0% of
+self-references point at the same target as the previous one**. 99.2% are more
+than 16 hunks back, with the mode at 2^14-2^15 - 16k to 64k hunks, 64-256 MB
+into the file - so no small cache can reach them. The single-entry cache that
+ships under LOWRAM is at the knee. 16 MB of PSRAM would avoid 9.5% of reads for
+perhaps 6-7% of wall time.
+
+## Portability of the two perf changes
+
+Measured, not extrapolated (aarch64 under qemu, so ratios not absolute times):
+
+| | x86-64 -O2 | x86-64 -O3 | aarch64 -O2 | aarch64 -O3 | RV32 |
+|---|---|---|---|---|---|
+| crc16 slice-4 (shipped) | 3.55x | 3.52x | 1.97x | 2.42x | 1.9x |
+| crc16 **slice-8** (not done) | **6.57x** | **6.42x** | 2.35x | 2.70x | n/a |
+| ECC P SWAR32 (shipped) | 2.54x | 2.70x | 4.41x | 4.54x | 1.47x |
+| ECC P row-inner (rejected) | 0.79x | 8.36x | 0.84x | 8.19x | 0.95x |
+
+SWAR32 wins on every target at both optimisation levels, which is why it
+shipped; row-inner is far better at -O3 with a vector unit but **loses** at -O2
+and on RV32, and distro packages are frequently -O2.
+
+**Slice-by-8 is a free 1.85x over slice-4 on 64-bit** for +2 KB of rodata. Not
+implemented - it only pays on 64-bit and would add a second code path.

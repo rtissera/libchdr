@@ -205,71 +205,91 @@ Layering the same card at the same 40MHz clock three ways:
 
 The card sustains ~19 MB/s and scales with transfer size. FatFs costs 1.8x.
 **The VFS and newlib stdio wrapper above it costs another 4.6x**, and delivers
-a flat 2.30 MB/s no matter how large the request is.
+a flat 2.30 MB/s no matter how large the request is. Halving the SD clock to
+20MHz costs only 13%, so the bus is not the constraint either.
 
 libchdr never has to care. `core_file_callbacks` already lets the embedder
 supply any reader, so a FatFs-backed backend is a drop-in replacement for the
-stdio one and **needs no change to the library**. Measured over the 5-file
-subset, identical read counts in both configurations - only the cost per byte
-differs:
+stdio one and **needs no change to the library**.
 
-| file | stdio | FatFs | io% stdio -> FatFs |
+### Two things the backend must do
+
+Going straight to FatFs skips ESP-IDF's VFS - and the VFS is what normally
+allocates `cltbl` and runs `f_lseek(CREATE_LINKMAP)` (`vfs_fat.c`). Without
+that, **the backend silently has no fast seek**, and since every
+`COMPRESSION_SELF` reference is a backward seek, FatFs restarts its
+cluster-chain walk from the first cluster on each one. On a 271328-hunk file
+that is 29.2% self-references, an uncapped sweep was still on that single file
+after 47 minutes. Build the cluster link map at open; see `fffile_open()`.
+
+That failure is invisible to a short run: near the start of a file the chain
+walks are cheap, so a 3000-hunk comparison shows the backend as a clean win
+while an uncapped one hangs.
+
+### Measured, full 14-file sample, uncapped, 7.32 GB each
+
+| configuration | time | throughput | vs stdio |
 |---|---|---|---|
-| Castlevania X | 2.24 | **5.06** | 88.1 -> 72.8 |
-| kinst2 | 1.70 | **2.54** | 61.9 -> 42.8 |
-| Ikaruga | 8.34 | **11.58** | 42.5 -> 20.1 |
-| Shadowrun | 1.58 | **2.04** | 35.1 -> 16.4 |
-| Bonk III | 2.03 | **2.31** | 43.5 -> 35.3 |
-| **aggregate** | **2.47** | **3.37 MB/s** | 60.5 s -> 44.4 s |
+| stdio backend | 3641 s | 2.01 MB/s | - |
+| FatFs + cluster map | 2549 s | 2.87 MB/s | **1.43x** |
+| FatFs + cluster map + 64KB read-ahead | **2307 s** | **3.17 MB/s** | **1.58x** |
+
+14/14 files decode and CRC-verify in every configuration.
+
+Per file, and the gain tracks how I/O-bound each one was:
+
+| file | stdio | FatFs | +read-ahead |
+|---|---|---|---|
+| Castlevania X | 1.32 | 2.71 | **2.96** (2.24x) |
+| kinst2 | 3.46 | 5.24 | **6.24** (1.80x) |
+| Shadowrun | 1.67 | 2.83 | 2.90 (1.74x) |
+| Insanity | 2.69 | 4.22 | 4.43 (1.65x) |
+| Bonk III | 1.65 | 1.95 | 2.81 (1.70x) |
+| Ikaruga | 5.84 | 6.06 | 6.46 (1.11x) |
+
+Ikaruga moves least because it was already ~90% CPU; Castlevania X moves most
+because it was 88% I/O.
 
 **Anyone running libchdr on ESP-IDF over FATFS should implement
-`core_file_callbacks` over `f_read` rather than `fopen`/`fread`.** It is worth
-more than every change in the library measured here put together. Select it in
-this benchmark with `-DBENCH_FATFS_BACKEND=1`.
+`core_file_callbacks` over `f_read` with a cluster link map, rather than
+`fopen`/`fread`.** Select it in this benchmark with `-DBENCH_FATFS_BACKEND=1`.
 
-Halving the SD clock to 20MHz costs only 13% (2.05 vs 2.30 MB/s), so the bus
-is not the constraint either.
+### Read-ahead pays here - but only on this backend
 
-With I/O no longer dominant the balance shifts: Shadowrun and Ikaruga become
-84% and 80% CPU, so anything further has to come from decode or from avoiding
-decode, not from storage.
+`chd_set_cache_budget()` (0 by default) gives libchdr a byte budget for a
+compressed read-ahead window. Its value depends entirely on what is underneath:
 
-### Read-ahead: measured, and it does not pay here
+| backend | read-ahead gain | p99 effect |
+|---|---|---|
+| stdio | **1.01x** | up to **22x worse** |
+| FatFs + cluster map | **1.10x** | mostly *better* than baseline |
 
-A caller-budgeted read-ahead window (`chd_set_cache_budget()`, 0 by default)
-cuts `fread()` calls 6-16x on real files. It bought **1.2%** of throughput and
-made p99 hunk latency up to **22x worse**, because a refill transfers the whole
-window rather than one hunk. Castlevania X, the most I/O-bound file and the one
-it should have helped most, regressed from 2.24 to 2.03 MB/s.
+On stdio the per-byte cost inside the VFS dominates, so cutting the number of
+calls by 6-16x changes almost nothing while a window-sized refill wrecks tail
+latency. Once that per-byte cost is gone, per-*call* cost is a real fraction
+and the same change earns 10%. Bonk III gains most (1.95 -> 2.81) - smallest
+hunks, so the most calls.
 
-The premise was wrong: transaction count is not the cost. That is visible
-directly in the table above - throughput is flat across a 32x range of request
-sizes, so the path is bandwidth-bound in software, not transaction-bound. The
-feature is kept default-off because the mechanism is sound where per-call cost
-genuinely dominates, but it should not be enabled on this evidence.
+This is the clearest example on this branch of an optimisation being right or
+wrong depending on a layer below it, rather than on its own merits.
 
-## Storage, not decode, is the bottleneck
+## Decode versus storage, against an x86-64 desktop
 
-Per-file attribution (timing inside the storage callbacks, which are the
-only path from the decoder to the card) puts I/O at 10-85% of wall time
-depending on the file. Comparing the same files and the same build flags
-against an x86-64 desktop (Ryzen 7 PRO 8840HS) separates the two cleanly:
+Same files, same build flags, versus a Ryzen 7 PRO 8840HS:
 
 | | ESP32-P4 | x86-64 | ratio |
 |---|---|---|---|
-| whole sample, wall clock | 2345.9 s | 145.3 s | **16.1x** |
-| decode only (wall x (1 - io%)) | | | **6.0 - 8.6x**, mean ~7.2x |
+| whole sample, wall clock | 2345.9 s | 145.3 s | 16.1x |
+| decode only (wall x (1 - io%)) | | | **6.0-8.6x**, mean ~7.2x |
 
-The CPU-only ratio is remarkably tight across four codec families, five
-hunk geometries and a 500x file-size range. A ~7x gap between a 400MHz
-RISC-V core and a modern x86 core is about what clock and microarchitecture
-predict on their own - libchdr's decode is not doing anything pathological
-on RISC-V. Everything beyond that ~7x is storage, and it is the part worth
-optimising.
+The CPU-only ratio is tight across four codec families, five hunk geometries
+and a 500x file-size range, which says libchdr's decode is not doing anything
+pathological on RISC-V - roughly what clock and microarchitecture predict on
+their own. Everything beyond that ~7x was storage, and most of it turned out
+to be the software above the driver rather than the hardware.
 
-Two caveats on the comparison: the x86 side reads through the page cache,
-so its I/O is nearly free, and the CPU-only column is derived by
-subtracting measured io%, not measured directly.
+Measured before the FatFs backend existed, so the wall-clock column reflects
+the stdio path; the decode-only column is unaffected by it.
 
 ### Read amplification
 

@@ -760,7 +760,14 @@ static CHDR_INLINE void put_bigendian_uint48(uint8_t *base, uint64_t value)
 
 static CHDR_INLINE uint32_t get_bigendian_uint32_t(const uint8_t *base)
 {
-	return (base[0] << 24) | (base[1] << 16) | (base[2] << 8) | base[3];
+	/* Cast before shifting: base[0] promotes to int, so base[0] << 24 is
+	 * signed overflow - undefined - for any byte >= 0x80. Real files never hit
+	 * it because every field read through here holds either a small count or a
+	 * four-character codec tag, and those are ASCII, but a malformed file only
+	 * has to set one high bit. The uint48 and uint64 readers above already
+	 * cast for the same reason. */
+	return ((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+	       ((uint32_t)base[2] << 8)  |  (uint32_t)base[3];
 }
 
 /*-------------------------------------------------
@@ -1098,6 +1105,15 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	lengthbits = rawbuf[12];
 	selfbits = rawbuf[13];
 	parentbits = rawbuf[14];
+
+	/* These three are raw bytes from the file and they become the bit width
+	 * passed to bitstream_read() for every map entry. Anything above 32 makes
+	 * bitstream_peek() shift by a negative amount, so a malformed file could
+	 * reach undefined behaviour before any other check ran. chdman derives
+	 * them from hunkbytes and the hunk count, so they never legitimately
+	 * exceed 32. */
+	if (lengthbits > 32 || selfbits > 32 || parentbits > 32)
+		return CHDERR_INVALID_FILE;
 
 	/* now read the map */
 	if ((header->mapoffset + mapbytes) < header->mapoffset || (header->mapoffset + mapbytes) >= chd->file_size)

@@ -8,6 +8,7 @@
 
 ***************************************************************************/
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "../include/libchdr/flac.h"
@@ -52,6 +53,7 @@ int flac_decoder_init(flac_decoder *decoder)
 	decoder->uncompressed_offset = 0;
 	decoder->uncompressed_length = 0;
 	decoder->uncompressed_swap = 0;
+	decoder->alloc_failed = 0;
 	return 0;
 }
 
@@ -74,14 +76,53 @@ void flac_decoder_free(flac_decoder* decoder)
  *-------------------------------------------------
  */
 
+/* drflac_open_with_metadata() allocates the decoder plus a decoded-sample
+ * buffer sized from the STREAMINFO block (for a CD-FLAC hunk that is ~40KB),
+ * and reset() is called once per hunk - so on a small-RAM target this is the
+ * single most likely thing to fail here. Route it through callbacks that
+ * record an allocation failure, so callers can report CHDERR_OUT_OF_MEMORY
+ * instead of lumping it in with a genuine CHDERR_DECOMPRESSION_ERROR. */
+
+static void *flac_decoder_malloc_callback(size_t sz, void *userdata)
+{
+	flac_decoder *decoder = (flac_decoder *)userdata;
+	void *ptr = malloc(sz);
+	if (ptr == NULL)
+		decoder->alloc_failed = 1;
+	return ptr;
+}
+
+static void *flac_decoder_realloc_callback(void *ptr, size_t sz, void *userdata)
+{
+	flac_decoder *decoder = (flac_decoder *)userdata;
+	void *newptr = realloc(ptr, sz);
+	if (newptr == NULL)
+		decoder->alloc_failed = 1;
+	return newptr;
+}
+
+static void flac_decoder_free_callback(void *ptr, void *userdata)
+{
+	(void)userdata;
+	free(ptr);
+}
+
 static int flac_decoder_internal_reset(flac_decoder* decoder)
 {
+	drflac_allocation_callbacks callbacks;
+
+	callbacks.pUserData = decoder;
+	callbacks.onMalloc = flac_decoder_malloc_callback;
+	callbacks.onRealloc = flac_decoder_realloc_callback;
+	callbacks.onFree = flac_decoder_free_callback;
+
 	decoder->compressed_offset = 0;
+	decoder->alloc_failed = 0;
 	flac_decoder_free(decoder);
 	decoder->decoder = drflac_open_with_metadata(
 		flac_decoder_read_callback, flac_decoder_seek_callback,
 		flac_decoder_tell_callback, flac_decoder_metadata_callback,
-		decoder, NULL);
+		decoder, &callbacks);
 	return (decoder->decoder != NULL);
 }
 

@@ -51,3 +51,7 @@ endif()
 if(BENCH_MULPROBE)
 	target_compile_definitions(${COMPONENT_LIB} PRIVATE BENCH_MULPROBE=1)
 endif()
+# ECC inner-loop variant comparison: idf.py -DBENCH_MULPROBE=1 -DBENCH_ECCPROBE=1
+if(BENCH_ECCPROBE)
+	target_compile_definitions(${COMPONENT_LIB} PRIVATE BENCH_ECCPROBE=1)
+endif()

@@ -969,6 +969,233 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 
 
 /* --------------------------------------------------------------------------
+ * BENCH_ECCPROBE: which ECC inner loop is actually fastest on this core.
+ *
+ * Two independent substitutions are available, and instruction counts on x86
+ * predict the opposite of what an in-order single-issue core does, so measure:
+ *
+ *   ecclow[256]   is exactly xtime(x) in GF(2^8) with poly 0x11d - verified
+ *                 for all 256 entries. Table = xor/add/lbu in-loop (one load);
+ *                 arithmetic = 6 ALU ops, no load.
+ *   poffsets/qoffsets are closed form - verified exactly:
+ *                 poffsets[r][c] = r + 86c
+ *                 qoffsets[r][c] = (86*(r>>1) + (r&1) + 88c) mod 2236
+ *                 so the offset load can become an increment. Together the
+ *                 three tables are 8856 bytes of .rodata.
+ * -------------------------------------------------------------------------- */
+#ifndef BENCH_ECCPROBE
+#define BENCH_ECCPROBE 0
+#endif
+
+#if BENCH_ECCPROBE
+#include "esp_cpu.h"
+
+#define EP_P_NUM 86
+#define EP_P_COMP 24
+#define EP_Q_NUM 52
+#define EP_Q_COMP 43
+#define EP_P_OFF 0x81c
+#define EP_Q_OFF (EP_P_OFF + 2 * EP_P_NUM)
+
+static uint16_t ep_poff[EP_P_NUM][EP_P_COMP];
+static uint16_t ep_qoff[EP_Q_NUM][EP_Q_COMP];
+static uint8_t  ep_ecclow[256];
+static uint8_t  ep_sector[2352];
+
+static void ep_init(void)
+{
+	int r, c, i;
+	for (r = 0; r < EP_P_NUM; r++)
+		for (c = 0; c < EP_P_COMP; c++)
+			ep_poff[r][c] = (uint16_t)(r + 86 * c);
+	for (r = 0; r < EP_Q_NUM; r++)
+		for (c = 0; c < EP_Q_COMP; c++)
+			ep_qoff[r][c] = (uint16_t)((86 * (r >> 1) + (r & 1) + 88 * c) % 2236);
+	for (i = 0; i < 256; i++)
+		ep_ecclow[i] = (uint8_t)((i << 1) ^ ((i >> 7) * 0x1d));
+	for (i = 0; i < 2352; i++)
+		ep_sector[i] = (uint8_t)(i * 7 + (i >> 3));
+	ep_sector[15] = 1;   /* mode 1, so the mode-2 masking path is not taken */
+}
+
+#define EP_XTIME(x) ((uint8_t)(((x) << 1) ^ (((x) >> 7) * 0x1d)))
+
+/* A: table offsets + table xtime  (what ships today) */
+static void ep_bytes_A(const uint8_t *sec, const uint16_t *row, int len,
+                       uint8_t *o1, uint8_t *o2)
+{
+	const uint8_t *d = sec + 12;
+	uint8_t v1 = 0, v2 = 0;
+	int c;
+	for (c = 0; c < len; c++) {
+		const uint8_t b = d[row[c]];
+		v1 = ep_ecclow[v1 ^ b];
+		v2 ^= b;
+	}
+	*o1 = v1; *o2 = v2 ^ v1;
+}
+
+/* B: table offsets + arithmetic xtime */
+static void ep_bytes_B(const uint8_t *sec, const uint16_t *row, int len,
+                       uint8_t *o1, uint8_t *o2)
+{
+	const uint8_t *d = sec + 12;
+	uint8_t v1 = 0, v2 = 0;
+	int c;
+	for (c = 0; c < len; c++) {
+		const uint8_t b = d[row[c]];
+		uint8_t t = v1 ^ b;
+		v1 = EP_XTIME(t);
+		v2 ^= b;
+	}
+	*o1 = v1; *o2 = v2 ^ v1;
+}
+
+/* C: closed-form offsets + table xtime.  P walks +86, Q walks +88 mod 2236. */
+static void ep_bytes_C(const uint8_t *sec, uint32_t off, uint32_t step,
+                       uint32_t mod, int len, uint8_t *o1, uint8_t *o2)
+{
+	const uint8_t *d = sec + 12;
+	uint8_t v1 = 0, v2 = 0;
+	int c;
+	for (c = 0; c < len; c++) {
+		const uint8_t b = d[off];
+		v1 = ep_ecclow[v1 ^ b];
+		v2 ^= b;
+		off += step;
+		if (off >= mod) off -= mod;
+	}
+	*o1 = v1; *o2 = v2 ^ v1;
+}
+
+/* D: closed-form offsets + arithmetic xtime */
+static void ep_bytes_D(const uint8_t *sec, uint32_t off, uint32_t step,
+                       uint32_t mod, int len, uint8_t *o1, uint8_t *o2)
+{
+	const uint8_t *d = sec + 12;
+	uint8_t v1 = 0, v2 = 0;
+	int c;
+	for (c = 0; c < len; c++) {
+		const uint8_t b = d[off];
+		uint8_t t = v1 ^ b;
+		v1 = EP_XTIME(t);
+		v2 ^= b;
+		off += step;
+		if (off >= mod) off -= mod;
+	}
+	*o1 = v1; *o2 = v2 ^ v1;
+}
+
+static void ep_gen_AB(uint8_t *sec, int arith)
+{
+	int b;
+	for (b = 0; b < EP_P_NUM; b++)
+		(arith ? ep_bytes_B : ep_bytes_A)(sec, ep_poff[b], EP_P_COMP,
+			&sec[EP_P_OFF + b], &sec[EP_P_OFF + EP_P_NUM + b]);
+	for (b = 0; b < EP_Q_NUM; b++)
+		(arith ? ep_bytes_B : ep_bytes_A)(sec, ep_qoff[b], EP_Q_COMP,
+			&sec[EP_Q_OFF + b], &sec[EP_Q_OFF + EP_Q_NUM + b]);
+}
+
+static void ep_gen_CD(uint8_t *sec, int arith)
+{
+	int b;
+	for (b = 0; b < EP_P_NUM; b++)
+		(arith ? ep_bytes_D : ep_bytes_C)(sec, (uint32_t)b, 86, 0xffffffffu,
+			EP_P_COMP, &sec[EP_P_OFF + b], &sec[EP_P_OFF + EP_P_NUM + b]);
+	for (b = 0; b < EP_Q_NUM; b++)
+		(arith ? ep_bytes_D : ep_bytes_C)(sec,
+			(uint32_t)(86 * (b >> 1) + (b & 1)), 88, 2236,
+			EP_Q_COMP, &sec[EP_Q_OFF + b], &sec[EP_Q_OFF + EP_Q_NUM + b]);
+}
+
+/* E: P restructured so the 86 independent rows are the inner loop over
+ * contiguous bytes (poffsets[r][c] = r + 86c), which auto-vectorises - 9.7x on
+ * x86 SSE2, 17.7x AVX2, and NEON on aarch64. The P4 has no vector unit GCC can
+ * target, so this measures whether the restructure alone costs anything here.
+ * Q keeps the shipped scalar table path; its offsets are a diagonal and are not
+ * contiguous in either dimension. */
+#pragma GCC push_options
+#pragma GCC optimize("O3","tree-vectorize")
+static void ep_p_rows_vec(const uint8_t *sec, uint8_t *p1, uint8_t *p2)
+{
+	const uint8_t *d = sec + 12;
+	uint8_t v1[EP_P_NUM], v2[EP_P_NUM];
+	int c, r;
+	memset(v1, 0, EP_P_NUM); memset(v2, 0, EP_P_NUM);
+	for (c = 0; c < EP_P_COMP; c++) {
+		const uint8_t *src = d + EP_P_NUM * c;
+		for (r = 0; r < EP_P_NUM; r++) {
+			uint8_t b = src[r];
+			uint8_t t = v1[r] ^ b;
+			v1[r] = (uint8_t)((t << 1) ^ ((t >> 7) * 0x1d));
+			v2[r] ^= b;
+		}
+	}
+	for (r = 0; r < EP_P_NUM; r++) { p1[r] = v1[r]; p2[r] = v2[r] ^ v1[r]; }
+}
+#pragma GCC pop_options
+
+static void ep_gen_E(uint8_t *sec)
+{
+	int b;
+	ep_p_rows_vec(sec, &sec[EP_P_OFF], &sec[EP_P_OFF + EP_P_NUM]);
+	for (b = 0; b < EP_Q_NUM; b++)
+		ep_bytes_A(sec, ep_qoff[b], EP_Q_COMP,
+			&sec[EP_Q_OFF + b], &sec[EP_Q_OFF + EP_Q_NUM + b]);
+}
+
+static void run_eccprobe(void)
+{
+	static uint8_t ref[2352], tmp[2352];
+	const char *names[5] = { "A table off + table xtime (ships)",
+	                         "B table off + arith xtime",
+	                         "C closed off + table xtime",
+	                         "D closed off + arith xtime",
+	                         "E P row-inner vectorisable + Q as-is" };
+	double base = 0.0;
+	int v;
+
+	ep_init();
+	printf("=== ECC inner-loop variants (2352-byte sector, ecc_generate) ===\n");
+
+	/* correctness: every variant must produce the same parity bytes */
+	memcpy(ref, ep_sector, 2352); ep_gen_AB(ref, 0);
+	for (v = 1; v < 5; v++) {
+		memcpy(tmp, ep_sector, 2352);
+		if (v == 1) ep_gen_AB(tmp, 1);
+		else if (v == 4) ep_gen_E(tmp);
+		else ep_gen_CD(tmp, v == 3);
+		printf("  variant %c parity %s\n", 'A' + v,
+			memcmp(ref, tmp, 2352) == 0 ? "MATCHES A" : "*** DIFFERS ***");
+	}
+
+	for (v = 0; v < 5; v++) {
+		const int reps = 2000;
+		uint32_t best = 0xffffffffu;
+		int rep, k;
+		for (rep = 0; rep < 5; rep++) {
+			uint32_t t0 = esp_cpu_get_cycle_count();
+			for (k = 0; k < reps; k++) {
+				if (v < 2) ep_gen_AB(ep_sector, v);
+				else if (v == 4) ep_gen_E(ep_sector);
+				else ep_gen_CD(ep_sector, v == 3);
+			}
+			uint32_t t1 = esp_cpu_get_cycle_count();
+			if ((t1 - t0) < best) best = t1 - t0;
+		}
+		{
+			double cyc = (double)best / reps;
+			if (v == 0) base = cyc;
+			printf("  %-34s %8.0f cycles/sector  %5.2f us  %5.3fx\n",
+				names[v], cyc, cyc / 400.0, base / cyc);
+		}
+	}
+	printf("=== eccprobe done ===\n");
+}
+#endif /* BENCH_ECCPROBE */
+
+/* --------------------------------------------------------------------------
  * BENCH_MULPROBE: dependent-chain latency for the integer multiplier.
  *
  * dr_flac's LPC prediction for CD audio always takes its 64-bit path
@@ -1095,6 +1322,9 @@ void app_main(void)
 #if BENCH_MULPROBE
 	run_mulprobe();
 	run_mallocprobe();
+#if BENCH_ECCPROBE
+	run_eccprobe();
+#endif
 	return;
 #endif
 	printf("=== libchdr ESP32-P4 real-hardware throughput benchmark ===\n");

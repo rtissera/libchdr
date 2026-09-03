@@ -209,8 +209,13 @@ static size_t fffile_fread(void *ptr, size_t size, size_t nmemb, void *argp)
 
 static int fffile_fclose(void *argp)
 {
-	FRESULT r = f_close((FIL *)argp);
-	free(argp);
+	FIL *fp = (FIL *)argp;
+	DWORD *clmt = fp->cltbl;
+	FRESULT r;
+	fp->cltbl = NULL;
+	r = f_close(fp);
+	free(clmt);
+	free(fp);
 	return (r == FR_OK) ? 0 : -1;
 }
 
@@ -242,15 +247,43 @@ static const core_file_callbacks fffile_callbacks = {
 };
 
 /* opens a FatFs path (the VFS path minus the mount prefix) */
+/* CLMT size for the FatFs backend. Every file on this card is a single
+ * fragment, so 3 words suffice; sized well above that so fragmented cards
+ * still get fast seek. 512 words is 2KB per open file. */
+#define FFFILE_CLMT_WORDS 512
+
 static FIL *fffile_open(const char *vfs_path)
 {
 	const char *ff = vfs_path;
 	FIL *fp;
+	DWORD *clmt;
+
 	if (strncmp(ff, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0)
 		ff += strlen(SD_MOUNT_POINT);
 	fp = (FIL *)malloc(sizeof(FIL));
 	if (fp == NULL) return NULL;
 	if (f_open(fp, ff, FA_READ) != FR_OK) { free(fp); return NULL; }
+
+	/* Build the cluster link map ourselves. Going straight to FatFs skips
+	 * ESP-IDF's VFS, and the VFS is what normally allocates cltbl and runs
+	 * f_lseek(CREATE_LINKMAP) - see vfs_fat.c. Without it every *backward*
+	 * seek restarts FatFs's cluster-chain walk from the first cluster, and
+	 * every COMPRESSION_SELF reference is a backward seek, so a self-ref-heavy
+	 * CHD slows to a crawl. That is the same pathology CONFIG_FATFS_USE_FASTSEEK
+	 * was enabled to cure, and it is easy to miss: a short capped run never
+	 * walks far enough to notice. */
+	clmt = (DWORD *)malloc(sizeof(DWORD) * FFFILE_CLMT_WORDS);
+	if (clmt != NULL) {
+		fp->cltbl = clmt;
+		clmt[0] = FFFILE_CLMT_WORDS;
+		if (f_lseek(fp, CREATE_LINKMAP) != FR_OK) {
+			/* too fragmented to map - run without fast seek rather than fail */
+			printf("  (fast seek unavailable, needs %lu words)\n", (unsigned long)clmt[0]);
+			fp->cltbl = NULL;
+			free(clmt);
+		}
+		f_lseek(fp, 0);
+	}
 	return fp;
 }
 

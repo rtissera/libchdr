@@ -760,7 +760,14 @@ static CHDR_INLINE void put_bigendian_uint48(uint8_t *base, uint64_t value)
 
 static CHDR_INLINE uint32_t get_bigendian_uint32_t(const uint8_t *base)
 {
-	return (base[0] << 24) | (base[1] << 16) | (base[2] << 8) | base[3];
+	/* Cast before shifting: base[0] promotes to int, so base[0] << 24 is
+	 * signed overflow - undefined - for any byte >= 0x80. Real files never hit
+	 * it because every field read through here holds either a small count or a
+	 * four-character codec tag, and those are ASCII, but a malformed file only
+	 * has to set one high bit. The uint48 and uint64 readers above already
+	 * cast for the same reason. */
+	return ((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+	       ((uint32_t)base[2] << 8)  |  (uint32_t)base[3];
 }
 
 /*-------------------------------------------------

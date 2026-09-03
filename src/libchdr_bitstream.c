@@ -71,7 +71,10 @@ uint32_t bitstream_peek(struct bitstream* bitstream, int numbits)
 
 void bitstream_remove(struct bitstream* bitstream, int numbits)
 {
-	bitstream->buffer <<= numbits;
+	/* buffer is 32 bits wide, so shifting by 32 is undefined even though
+	 * consuming all 32 is a legitimate request - peek() already returns the
+	 * whole buffer for that width. */
+	bitstream->buffer = (numbits >= 32) ? 0 : (bitstream->buffer << numbits);
 	bitstream->bits -= numbits;
 }
 

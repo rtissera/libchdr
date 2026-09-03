@@ -1106,6 +1106,15 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	selfbits = rawbuf[13];
 	parentbits = rawbuf[14];
 
+	/* These three are raw bytes from the file and they become the bit width
+	 * passed to bitstream_read() for every map entry. Anything above 32 makes
+	 * bitstream_peek() shift by a negative amount, so a malformed file could
+	 * reach undefined behaviour before any other check ran. chdman derives
+	 * them from hunkbytes and the hunk count, so they never legitimately
+	 * exceed 32. */
+	if (lengthbits > 32 || selfbits > 32 || parentbits > 32)
+		return CHDERR_INVALID_FILE;
+
 	/* now read the map */
 	if ((header->mapoffset + mapbytes) < header->mapoffset || (header->mapoffset + mapbytes) >= chd->file_size)
 		return CHDERR_INVALID_FILE;

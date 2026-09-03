@@ -55,6 +55,12 @@ if (WITH_SYSTEM_ZLIB)
 else()
   if(NOT TARGET miniz)
     add_subdirectory(deps/miniz-3.1.2 EXCLUDE_FROM_ALL)
+    # ESP ROMs export an older miniz that would otherwise capture this one
+    # at link time; applied here rather than inside deps/ so a miniz bump
+    # can't drop it. No-op off ESP-IDF.
+    include(${CMAKE_CURRENT_LIST_DIR}/cmake/EspRomMinizWorkaround.cmake)
+    libchdr_apply_esp_rom_miniz_workaround(miniz)
+    set(CHDR_NEEDS_MINIZ_RENAME TRUE)
   endif()
   list(APPEND CHDR_LIBS miniz)
 endif()
@@ -124,6 +130,12 @@ set(CHDR_SOURCES
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static INTERFACE include)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+# libchdr_codec_zlib.c calls tinfl_decompress() directly, so it must be renamed
+# alongside miniz's definition - otherwise on ESP-IDF this call binds to the
+# ROM's older copy and we are back to the split decoder this branch fixed.
+if(CHDR_NEEDS_MINIZ_RENAME)
+  libchdr_apply_esp_rom_miniz_workaround(chdr-static)
+endif()
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFINES})
 
 if(MSVC)
@@ -140,6 +152,9 @@ if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr INTERFACE include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+  if(CHDR_NEEDS_MINIZ_RENAME)
+    libchdr_apply_esp_rom_miniz_workaround(chdr)
+  endif()
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFINES})
 
   if(MSVC)

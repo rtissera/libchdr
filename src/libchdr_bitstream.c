@@ -51,8 +51,16 @@ uint32_t bitstream_peek(struct bitstream* bitstream, int numbits)
 	{
 		while (bitstream->bits <= 24)
 		{
-			if (bitstream->doffset < bitstream->dlength)
-				bitstream->buffer |= (uint32_t)bitstream->read[bitstream->doffset] << (24 - bitstream->bits);
+			/* bits goes negative once a stream has been over-consumed, which
+			 * malformed input can provoke, and then 24 - bits reaches 32 and
+			 * the shift is undefined. A byte shifted that far lands entirely
+			 * above bit 31, so contributing nothing is also the arithmetically
+			 * correct result - well-formed streams keep bits >= 0 and never
+			 * take this branch. */
+			const int shift = 24 - bitstream->bits;
+
+			if (bitstream->doffset < bitstream->dlength && shift < 32)
+				bitstream->buffer |= (uint32_t)bitstream->read[bitstream->doffset] << shift;
 			bitstream->doffset++;
 			bitstream->bits += 8;
 		}

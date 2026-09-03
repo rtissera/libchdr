@@ -11,10 +11,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../include/libchdr/chdconfig.h"
 #include "../include/libchdr/flac.h"
 #include "../include/libchdr/macros.h"
 #define DR_FLAC_IMPLEMENTATION
 #define DR_FLAC_NO_STDIO
+
+/* dr_flac CRC-checks every FLAC frame it decodes. When libchdr is also
+ * verifying each decoded hunk against the CRC chdman stored, that is the same
+ * data checked twice: a corrupt frame that dr_flac would reject instead decodes
+ * to garbage, and the hunk CRC rejects it one level up with the same
+ * CHDERR_DECOMPRESSION_ERROR. Dropping the inner check is worth ~8% of a CD-FLAC
+ * hunk and 13 KB of text on RV32, where the compiler can then discard dr_flac's
+ * CRC-8 and CRC-16 tables entirely.
+ *
+ * Deliberately tied to VERIFY_BLOCK_CRC and not to any "small target" switch:
+ * VERIFY_BLOCK_CRC is exactly the thing that makes it safe. Without it the
+ * frame CRC is the only integrity check FLAC data gets.
+ *
+ * DR_FLAC_NO_CRC also disables binary-search seeking, which libchdr never uses
+ * - each hunk is opened as a complete stream and read straight through, and
+ * drflac_seek_to_pcm_frame() is never called. */
+#if VERIFY_BLOCK_CRC
+#define DR_FLAC_NO_CRC
+#endif
+
 #include "../include/dr_libs/dr_flac.h"
 
 /***************************************************************************

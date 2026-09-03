@@ -967,8 +967,88 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	return r;
 }
 
+
+/* --------------------------------------------------------------------------
+ * BENCH_MULPROBE: dependent-chain latency for the integer multiplier.
+ *
+ * dr_flac's LPC prediction for CD audio always takes its 64-bit path
+ * (bitsPerSample + precision + ilog2(order) = 16+15+5 > 32), and a 32x32->64
+ * multiply-accumulate on RV32 costs a mul plus a mulh where x86-64 spends one
+ * imul. If mulh is multi-cycle and unpipelined that is the whole reason FLAC
+ * costs far more per instruction here than LZMA, whose range decoder has no
+ * 64-bit multiplies at all. Measure it rather than assume.
+ * -------------------------------------------------------------------------- */
+#ifndef BENCH_MULPROBE
+#define BENCH_MULPROBE 0
+#endif
+
+#if BENCH_MULPROBE
+#include "esp_cpu.h"
+
+#define MULPROBE_ITERS 200000
+
+/* Each chain is 8 back-to-back dependent ops, so the loop overhead is
+ * amortised and what is left is 8 x issue-to-use latency. */
+#define MULPROBE_CHAIN(name, insn)                                            \
+	static uint32_t mulprobe_##name(uint32_t iters, uint32_t seed)             \
+	{                                                                          \
+		uint32_t a = seed, b = 3, t0, t1;                                      \
+		t0 = esp_cpu_get_cycle_count();                                        \
+		while (iters--) {                                                      \
+			__asm__ volatile(                                                  \
+				insn " %0, %0, %1\n\t" insn " %0, %0, %1\n\t"                 \
+				insn " %0, %0, %1\n\t" insn " %0, %0, %1\n\t"                 \
+				insn " %0, %0, %1\n\t" insn " %0, %0, %1\n\t"                 \
+				insn " %0, %0, %1\n\t" insn " %0, %0, %1"                       \
+				: "+r"(a) : "r"(b));                                           \
+		}                                                                      \
+		t1 = esp_cpu_get_cycle_count();                                        \
+		g_mulprobe_sink += a;                                                  \
+		return t1 - t0;                                                        \
+	}
+
+static volatile uint32_t g_mulprobe_sink;
+MULPROBE_CHAIN(add,  "add")
+MULPROBE_CHAIN(mul,  "mul")
+MULPROBE_CHAIN(mulh, "mulh")
+MULPROBE_CHAIN(xor,  "xor")
+
+static void run_mulprobe(void)
+{
+	struct { const char *name; uint32_t (*fn)(uint32_t, uint32_t); } probes[] = {
+		{ "add ", mulprobe_add  },
+		{ "xor ", mulprobe_xor  },
+		{ "mul ", mulprobe_mul  },
+		{ "mulh", mulprobe_mulh },
+	};
+	size_t i;
+
+	printf("=== integer op latency (dependent chain, %d iters x 8 ops) ===\n",
+		MULPROBE_ITERS);
+	for (i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+		uint32_t best = 0xffffffffu, r;
+		int rep;
+		/* best of 5: the cycle counter is shared with interrupts */
+		for (rep = 0; rep < 5; rep++) {
+			r = probes[i].fn(MULPROBE_ITERS, 0x9e3779b9u + rep);
+			if (r < best)
+				best = r;
+		}
+		printf("  %s: %10u cycles for %u ops -> %.2f cycles/op\n",
+			probes[i].name, (unsigned)best,
+			(unsigned)(MULPROBE_ITERS * 8),
+			(double)best / (double)(MULPROBE_ITERS * 8));
+	}
+	printf("=== mulprobe done ===\n");
+}
+#endif /* BENCH_MULPROBE */
+
 void app_main(void)
 {
+#if BENCH_MULPROBE
+	run_mulprobe();
+	return;
+#endif
 	printf("=== libchdr ESP32-P4 real-hardware throughput benchmark ===\n");
 	printf("free heap: %u bytes (largest block: %u)\n",
 		(unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),

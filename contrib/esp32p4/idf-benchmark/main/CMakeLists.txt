@@ -46,3 +46,8 @@ endif()
 if(BENCH_FATFS_BACKEND)
 	target_compile_definitions(${COMPONENT_LIB} PRIVATE BENCH_FATFS_BACKEND=1)
 endif()
+# Integer multiply latency probe: idf.py -DBENCH_MULPROBE=1 runs only the
+# dependent-chain timing for add/xor/mul/mulh and returns, skipping the corpus.
+if(BENCH_MULPROBE)
+	target_compile_definitions(${COMPONENT_LIB} PRIVATE BENCH_MULPROBE=1)
+endif()

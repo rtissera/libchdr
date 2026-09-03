@@ -405,14 +405,102 @@ int ecc_verify(const uint8_t *sector)
  * @param [in,out]  sector  If non-null, the sector.
  */
 
+static CHDR_INLINE uint8_t ecc_xtime(uint8_t x)
+{
+	return (uint8_t)((x << 1) ^ ((x >> 7) * 0x1d));
+}
+
+/*-------------------------------------------------
+ *  ecc_p_generate_swar - compute the P parity four
+ *  rows at a time, packed into one 32-bit word
+ *-------------------------------------------------
+ */
+
+/* The P rows are independent of each other and, for a fixed component, they
+ * read consecutive bytes: poffsets[row][comp] is exactly row + 86*comp. So
+ * four rows fit in one 32-bit accumulator, and the whole per-component step
+ * becomes word-wide.
+ *
+ * The table lookup cannot come along - there is no gather - but it does not
+ * need to: ecclow[x] is exactly multiplication by x in GF(2^8) with polynomial
+ * 0x11d, verified over all 256 entries. Masking off the bits that would cross
+ * a byte boundary lets one word do four independent products.
+ *
+ * The bytes are assembled from four loads rather than read as a word: the P
+ * stride is 86 and 86 % 4 == 2, so consecutive components alternate 4-aligned
+ * and 2-aligned no matter how the caller aligned its buffer. Measured on
+ * ESP32-P4, doing it this way beats both a lw/lhu split and a padded aligned
+ * copy, and it is correct for any alignment.
+ */
+
+static CHDR_INLINE uint32_t ecc_xtime4(uint32_t t)
+{
+	return ((t << 1) & 0xfefefefeu) ^ (((t >> 7) & 0x01010101u) * 0x1du);
+}
+
+static void ecc_p_generate_swar(uint8_t *sector, int mode2)
+{
+	const uint8_t *data = &sector[SYNC_OFFSET + SYNC_NUM_BYTES];
+	int row, component;
+
+	for (row = 0; row + 4 <= ECC_P_NUM_BYTES; row += 4)
+	{
+		uint32_t v1 = 0, v2 = 0, out;
+		const uint8_t *src = data + row;
+
+		for (component = 0; component < ECC_P_COMP; component++)
+		{
+			const uint8_t *q = src + ECC_P_NUM_BYTES * component;
+			uint32_t x;
+
+			/* offset = row + 86*component, so offset < 4 - the only case mode 2
+			 * masks - is exactly this group's first component */
+			if (mode2 && row == 0 && component == 0)
+			{
+				x = 0;
+			}
+			else
+			{
+				x = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
+				    ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
+			}
+
+			v1 = ecc_xtime4(v1 ^ x);
+			v2 ^= x;
+		}
+
+		v1 = ((uint32_t)ecchigh[ecc_xtime(       (uint8_t)v1        ) ^ (uint8_t)v2])
+		   | ((uint32_t)ecchigh[ecc_xtime((uint8_t)(v1 >>  8)) ^ (uint8_t)(v2 >>  8)] <<  8)
+		   | ((uint32_t)ecchigh[ecc_xtime((uint8_t)(v1 >> 16)) ^ (uint8_t)(v2 >> 16)] << 16)
+		   | ((uint32_t)ecchigh[ecc_xtime((uint8_t)(v1 >> 24)) ^ (uint8_t)(v2 >> 24)] << 24);
+		out = v2 ^ v1;
+
+		sector[ECC_P_OFFSET + row + 0] = (uint8_t)v1;
+		sector[ECC_P_OFFSET + row + 1] = (uint8_t)(v1 >> 8);
+		sector[ECC_P_OFFSET + row + 2] = (uint8_t)(v1 >> 16);
+		sector[ECC_P_OFFSET + row + 3] = (uint8_t)(v1 >> 24);
+		sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + row + 0] = (uint8_t)out;
+		sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + row + 1] = (uint8_t)(out >> 8);
+		sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + row + 2] = (uint8_t)(out >> 16);
+		sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + row + 3] = (uint8_t)(out >> 24);
+	}
+
+	/* 86 is not a multiple of 4 - finish the tail scalar */
+	for (; row < ECC_P_NUM_BYTES; row++)
+		ecc_compute_bytes(sector, poffsets[row], ECC_P_COMP,
+			&sector[ECC_P_OFFSET + row], &sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + row]);
+}
+
 void ecc_generate(uint8_t *sector)
 {
 	int byte;
-	/* first verify P bytes */
-	for (byte = 0; byte < ECC_P_NUM_BYTES; byte++)
-		ecc_compute_bytes(sector, poffsets[byte], ECC_P_COMP, &sector[ECC_P_OFFSET + byte], &sector[ECC_P_OFFSET + ECC_P_NUM_BYTES + byte]);
 
-	/* then verify Q bytes */
+	/* first the P bytes, four rows per word */
+	ecc_p_generate_swar(sector, sector[MODE_OFFSET] == 2);
+
+	/* then the Q bytes. These cannot be packed the same way: qoffsets[row][comp]
+	 * is (86*(row>>1) + (row&1) + 88*comp) mod 2236, a diagonal that is
+	 * contiguous in neither dimension. */
 	for (byte = 0; byte < ECC_Q_NUM_BYTES; byte++)
 		ecc_compute_bytes(sector, qoffsets[byte], ECC_Q_COMP, &sector[ECC_Q_OFFSET + byte], &sector[ECC_Q_OFFSET + ECC_Q_NUM_BYTES + byte]);
 }

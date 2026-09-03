@@ -94,6 +94,17 @@ else()
 endif()
 
 if(CHDR_VERIFY_BLOCK_CRC)
+  # The per-hunk CRC chdman stores covers the fully reconstituted hunk, ECC and
+  # sync header included, so a build that skips ecc_generate() cannot match it.
+  # The failure is content-dependent - hunks holding only audio frames have no
+  # ECC to regenerate and still verify - which makes it look like sporadic file
+  # corruption rather than a build misconfiguration. Refuse the combination.
+  if(NOT CHDR_WANT_RAW_DATA_SECTOR)
+    message(FATAL_ERROR
+      "CHDR_VERIFY_BLOCK_CRC=ON requires CHDR_WANT_RAW_DATA_SECTOR=ON: without the "
+      "regenerated ECC and sync header the decoded hunk cannot match the CRC stored "
+      "in the file. Turn CHDR_VERIFY_BLOCK_CRC off as well to build without raw sectors.")
+  endif()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=1)
 else()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)

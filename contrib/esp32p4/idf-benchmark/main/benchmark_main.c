@@ -1013,6 +1013,53 @@ MULPROBE_CHAIN(mul,  "mul")
 MULPROBE_CHAIN(mulh, "mulh")
 MULPROBE_CHAIN(xor,  "xor")
 
+/* dr_flac allocates roughly one 32-64KB block per FLAC hunk (measured: 0.82
+ * allocs and ~34.7KB per cdfl hunk, against 0.017 and 714 bytes for cdlz).
+ * glibc's malloc cost is inside the x86 instruction counts we model against,
+ * but ESP-IDF's capability-tagged multi-heap allocator is not, so time it here
+ * rather than infer it from a model residual. */
+static void run_mallocprobe(void)
+{
+	static const size_t sizes[] = { 256, 4096, 32768, 65536, 223668 };
+	size_t i;
+
+	printf("=== heap_caps_malloc + free latency ===\n");
+	for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		const int reps = 2000;
+		uint32_t t0, t1, best = 0xffffffffu;
+		int rep, k;
+
+		for (rep = 0; rep < 5; rep++) {
+			t0 = esp_cpu_get_cycle_count();
+			for (k = 0; k < reps; k++) {
+				void *p = heap_caps_malloc(sizes[i], MALLOC_CAP_DEFAULT);
+				g_mulprobe_sink += (uint32_t)(uintptr_t)p;
+				heap_caps_free(p);
+			}
+			t1 = esp_cpu_get_cycle_count();
+			if ((t1 - t0) < best)
+				best = t1 - t0;
+		}
+		printf("  %7u B: %8.1f cycles/(malloc+free) = %6.2f us\n",
+			(unsigned)sizes[i], (double)best / reps,
+			(double)best / reps / 400.0);
+	}
+	/* and what it costs to merely touch that much fresh memory once */
+	{
+		const int reps = 200;
+		void *p = heap_caps_malloc(32768, MALLOC_CAP_DEFAULT);
+		uint32_t t0 = esp_cpu_get_cycle_count();
+		int k;
+		for (k = 0; k < reps; k++)
+			memset(p, k, 32768);
+		uint32_t t1 = esp_cpu_get_cycle_count();
+		printf("  memset 32KB: %.1f cycles = %.2f us\n",
+			(double)(t1 - t0) / reps, (double)(t1 - t0) / reps / 400.0);
+		heap_caps_free(p);
+	}
+	printf("=== mallocprobe done ===\n");
+}
+
 static void run_mulprobe(void)
 {
 	struct { const char *name; uint32_t (*fn)(uint32_t, uint32_t); } probes[] = {
@@ -1047,6 +1094,7 @@ void app_main(void)
 {
 #if BENCH_MULPROBE
 	run_mulprobe();
+	run_mallocprobe();
 	return;
 #endif
 	printf("=== libchdr ESP32-P4 real-hardware throughput benchmark ===\n");

@@ -13,6 +13,7 @@
 #ifndef __FLAC_H__
 #define __FLAC_H__
 
+#include <stddef.h>
 #include <stdint.h>
 
 /***************************************************************************
@@ -37,6 +38,13 @@ struct _flac_decoder {
 	uint32_t                uncompressed_length;	/* length of uncompressed data */
 	int                    	uncompressed_swap;		/* swap uncompressed sample data */
 	int                     alloc_failed;			/* set when the last reset() failed to allocate */
+	/* dr_flac takes its decoder, sample buffer and bit-reader cache as one
+	 * block, sized from the STREAMINFO block size - identical for every hunk
+	 * of a given CHD. reset() runs per hunk, so that block was being allocated
+	 * and freed thousands of times; retaining it keeps the heap still. */
+	void *                  arena;					/* retained dr_flac working block */
+	size_t                  arena_size;				/* its size, 0 if none */
+	int                     arena_busy;				/* lent to dr_flac right now */
 	uint8_t                 custom_header[0x2a];	/* custom header */
 };
 

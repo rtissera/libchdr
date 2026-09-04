@@ -43,6 +43,7 @@
  ***************************************************************************
  */
 
+static void flac_decoder_close_stream(flac_decoder* decoder);
 static size_t flac_decoder_read_callback(void *userdata, void *buffer, size_t bytes);
 static drflac_bool32 flac_decoder_seek_callback(void *userdata, int offset, drflac_seek_origin origin);
 static drflac_bool32 flac_decoder_tell_callback(void *userdata, drflac_int64 *cursor);
@@ -75,6 +76,9 @@ int flac_decoder_init(flac_decoder *decoder)
 	decoder->uncompressed_length = 0;
 	decoder->uncompressed_swap = 0;
 	decoder->alloc_failed = 0;
+	decoder->arena = NULL;
+	decoder->arena_size = 0;
+	decoder->arena_busy = 0;
 	return 0;
 }
 
@@ -85,9 +89,15 @@ int flac_decoder_init(flac_decoder *decoder)
 
 void flac_decoder_free(flac_decoder* decoder)
 {
-	if ((decoder != NULL) && (decoder->decoder != NULL)) {
-		drflac_close((drflac*)decoder->decoder);
-		decoder->decoder = NULL;
+	if (decoder == NULL)
+		return;
+	flac_decoder_close_stream(decoder);
+	/* teardown, unlike the per-hunk paths, really does give the block back */
+	if (decoder->arena != NULL) {
+		free(decoder->arena);
+		decoder->arena = NULL;
+		decoder->arena_size = 0;
+		decoder->arena_busy = 0;
 	}
 }
 
@@ -107,16 +117,62 @@ void flac_decoder_free(flac_decoder* decoder)
 static void *flac_decoder_malloc_callback(size_t sz, void *userdata)
 {
 	flac_decoder *decoder = (flac_decoder *)userdata;
-	void *ptr = malloc(sz);
-	if (ptr == NULL)
+	void *ptr;
+
+	/* Hand back the retained block when it fits and is not already lent out.
+	 * dr_flac takes one block per open and never holds two at once, but the
+	 * busy flag keeps that an observation rather than an assumption - a second
+	 * concurrent request just falls through to malloc(). */
+	if (!decoder->arena_busy && decoder->arena != NULL && decoder->arena_size >= sz) {
+		decoder->arena_busy = 1;
+		return decoder->arena;
+	}
+
+	ptr = malloc(sz);
+	if (ptr == NULL) {
 		decoder->alloc_failed = 1;
+		return NULL;
+	}
+
+	/* Adopt the first block that arrives, or trade up if a later stream needs
+	 * a bigger one (a different hunk geometry, or AVHuff audio). */
+	if (!decoder->arena_busy && sz > decoder->arena_size) {
+		if (decoder->arena != NULL)
+			free(decoder->arena);
+		decoder->arena = ptr;
+		decoder->arena_size = sz;
+		decoder->arena_busy = 1;
+	}
 	return ptr;
 }
 
 static void *flac_decoder_realloc_callback(void *ptr, size_t sz, void *userdata)
 {
 	flac_decoder *decoder = (flac_decoder *)userdata;
-	void *newptr = realloc(ptr, sz);
+	void *newptr;
+
+	/* Never pass the retained block to realloc(): it is free to move or release
+	 * it, which would leave decoder->arena dangling for the next hunk. Serve a
+	 * request that already fits in place, and otherwise move the block, keeping
+	 * the larger one as the retained block. dr_flac only reaches this path from
+	 * drflac_open_and_read_pcm_frames_*(), which libchdr does not call, so this
+	 * is here to keep the retention correct rather than to fix a live bug. */
+	if (ptr != NULL && ptr == decoder->arena) {
+		if (sz <= decoder->arena_size)
+			return decoder->arena;
+		newptr = malloc(sz);
+		if (newptr == NULL) {
+			decoder->alloc_failed = 1;
+			return NULL;
+		}
+		memcpy(newptr, decoder->arena, decoder->arena_size);
+		free(decoder->arena);
+		decoder->arena = newptr;
+		decoder->arena_size = sz;
+		return newptr;
+	}
+
+	newptr = realloc(ptr, sz);
 	if (newptr == NULL)
 		decoder->alloc_failed = 1;
 	return newptr;
@@ -124,8 +180,27 @@ static void *flac_decoder_realloc_callback(void *ptr, size_t sz, void *userdata)
 
 static void flac_decoder_free_callback(void *ptr, void *userdata)
 {
-	(void)userdata;
+	flac_decoder *decoder = (flac_decoder *)userdata;
+
+	/* Keep the retained block; only mark it available again. Everything else
+	 * dr_flac allocated is genuinely released. */
+	if (ptr != NULL && ptr == decoder->arena) {
+		decoder->arena_busy = 0;
+		return;
+	}
 	free(ptr);
+}
+
+/* Close the current stream but keep the retained block. Every per-hunk path
+ * uses this; only flac_decoder_free() - real teardown - gives the block back.
+ * finish() is called once per hunk by the cdfl codec, so routing it through
+ * the full teardown was silently undoing the retention. */
+static void flac_decoder_close_stream(flac_decoder* decoder)
+{
+	if ((decoder != NULL) && (decoder->decoder != NULL)) {
+		drflac_close((drflac*)decoder->decoder);
+		decoder->decoder = NULL;
+	}
 }
 
 static int flac_decoder_internal_reset(flac_decoder* decoder)
@@ -139,7 +214,7 @@ static int flac_decoder_internal_reset(flac_decoder* decoder)
 
 	decoder->compressed_offset = 0;
 	decoder->alloc_failed = 0;
-	flac_decoder_free(decoder);
+	flac_decoder_close_stream(decoder);
 	decoder->decoder = drflac_open_with_metadata(
 		flac_decoder_read_callback, flac_decoder_seek_callback,
 		flac_decoder_tell_callback, flac_decoder_metadata_callback,
@@ -238,7 +313,7 @@ uint32_t flac_decoder_finish(flac_decoder* decoder)
 	if (decoder->compressed_start == (const uint8_t *)(decoder->custom_header))
 		position -= decoder->compressed_length;
 
-	flac_decoder_free(decoder);
+	flac_decoder_close_stream(decoder);
 	return position;
 }
 

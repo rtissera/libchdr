@@ -20,3 +20,9 @@ if(BUILD_FUZZER)
     COMMAND "$<TARGET_FILE:chdr-fuzz>" "-max_len=131072"
     DEPENDS chdr-fuzz)
 endif()
+
+# known-answer tests for the hand-optimised ECC and CRC16 primitives, whose
+# output is not otherwise checked by anything that would fail loudly
+add_executable(chdr-kat kat.c)
+target_link_libraries(chdr-kat PRIVATE chdr-static)
+add_test(NAME known-answer COMMAND chdr-kat)

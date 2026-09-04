@@ -17,3 +17,9 @@ jobs:
 
       - name: Build
         run: cmake --build ${{github.workspace}}/build --config Release
+
+      # Known-answer tests for the hand-optimised ECC and CRC16 primitives.
+      # Runs across the whole matrix so the pinned values are checked on
+      # x86-64, arm64, macOS and Windows rather than one host.
+      - name: Known-answer tests
+        run: ctest --test-dir ${{github.workspace}}/build -C Release --output-on-failure

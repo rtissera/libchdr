@@ -205,5 +205,6 @@ if (BUILD_SHARED_LIBS)
 endif()
 
 if (CHDR_WANT_TESTS)
+  enable_testing()
   add_subdirectory(tests)
 endif()

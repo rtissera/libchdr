@@ -31,6 +31,9 @@ endif()
 if(NOT DEFINED BENCH_HUNK_CAP)
 	set(BENCH_HUNK_CAP 0)
 endif()
+if(NOT DEFINED SD_BAUD_HZ)
+	set(SD_BAUD_HZ 25000000)
+endif()
 
 # The LZMA SDK ships decoder assembly for x86-64 and AArch64 only; Cortex-M33
 # is ARMv8-M Thumb, so neither applies. Z7_LZMA_PROB32 is the one portable
@@ -73,6 +76,7 @@ target_compile_definitions(rp2350-bench PRIVATE
 	VERIFY_BLOCK_CRC=1
 	LOWRAM_TARGET=${LOWRAM_TARGET_VAL}
 	BENCH_HUNK_CAP=${BENCH_HUNK_CAP}
+	SD_BAUD_HZ=${SD_BAUD_HZ}
 	MINIZ_NO_ARCHIVE_APIS
 	MINIZ_NO_DEFLATE_APIS
 	MINIZ_NO_STDIO

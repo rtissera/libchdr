@@ -118,8 +118,16 @@ Needs the Pico SDK and carlk3's SD/FatFs library; neither is vendored.
     cmake -S contrib/rp2350 -B build-rp2350 -DCMAKE_BUILD_TYPE=Release
     cmake --build build-rp2350 -j
 
-`-DLOWRAM_TARGET_VAL=0|1` (default 1) and `-DBENCH_HUNK_CAP=N` (default 0 =
-every hunk).
+`-DLOWRAM_TARGET_VAL=0|1` (default 1), `-DBENCH_HUNK_CAP=N` (default 0 =
+every hunk) and `-DSD_BAUD_HZ=N` (default 25000000).
+
+The SD clock is worth more than any codec-side tuning found on this board.
+Measured over three I/O-heavy files, 12 MHz -> 25 MHz is 1.219x aggregate
+(kinst2 1.378x, Insanity 1.261x, Shadowrun 1.169x) with byte-identical
+output; the gain tracks each file's I/O share, and io% falls roughly in
+proportion to the clock. 25 MHz is the SD Default Speed rate and SPI mode
+has no open-drain derating, so it is in spec - but MCU SPI blocks and board
+routing do not always meet timing there, so drop it if a card misbehaves.
 
 ### Flashing
 

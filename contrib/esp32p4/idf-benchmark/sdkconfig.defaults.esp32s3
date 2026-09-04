@@ -1,0 +1,19 @@
+# Waveshare ESP32-S3-LCD-1.47: 16MB flash, 8MB PSRAM (unused here - the
+# benchmark fits in internal SRAM, same as on the P4, which keeps the two
+# comparable).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# 240MHz is the part's maximum; the IDF default for S3 is 160, which was
+# costing ~1.5x on every decode number.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# Xtensa's windowed calling convention spills far more stack per frame than
+# RISC-V, so the 16KB that is ample on the P4 overflows in the SD sweep's
+# deeper call chain (chd_read -> codec -> dr_flac/LZMA).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
+# The SD sweep decodes for many seconds at a time without yielding, which
+# starves the idle task and trips the task WDT. The work is the measurement,
+# so let it run.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60

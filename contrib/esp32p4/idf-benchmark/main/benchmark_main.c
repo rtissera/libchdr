@@ -31,6 +31,10 @@
 #include "sdmmc_cmd.h"
 #include "ff.h"
 #include "driver/sdmmc_host.h"
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
+#endif
 #if SOC_SDMMC_IO_POWER_EXTERNAL
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #endif
@@ -45,6 +49,18 @@
  * community bring-up suite: github.com/Tangerino/micropython-p4-test-suite).
  * SD card IO is powered from the P4's on-chip LDO channel 4 - without
  * enabling that, the slot times out with ESP_ERR_TIMEOUT. */
+#if CONFIG_IDF_TARGET_ESP32S3
+/* Waveshare ESP32-S3-LCD-1.47. The slot routes only CLK, CMD, DAT0 and DAT3,
+ * wired for SPI mode - those four are SCLK, MOSI, MISO and CS. Driving them as
+ * SDMMC just times out at send_op_cond. The LCD is on a separate SPI bus
+ * (SCLK 40, MOSI 45, CS 42), so the two do not share pins. */
+#define SD_SPI_HOST  SPI3_HOST
+#define SD_PIN_SCLK  14
+#define SD_PIN_MOSI  15
+#define SD_PIN_MISO  16
+#define SD_PIN_CS    21
+#else
+/* Waveshare ESP32-P4-NANO: native SDMMC, 4-bit */
 #define SD_PIN_CLK 43
 #define SD_PIN_CMD 44
 #define SD_PIN_D0  39
@@ -52,6 +68,7 @@
 #define SD_PIN_D2  41
 #define SD_PIN_D3  42
 #define SD_LDO_CHAN 4
+#endif
 #define SD_MOUNT_POINT "/sdcard"
 
 /* SD bus clock. ESP-IDF defaults to SDMMC_FREQ_DEFAULT (20MHz) when
@@ -299,10 +316,41 @@ static sdmmc_card_t *mount_sdcard(void)
 		.allocation_unit_size = 16 * 1024,
 	};
 
+#if CONFIG_IDF_TARGET_ESP32S3
+	sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+	host.slot = SD_SPI_HOST;
+	/* SD in SPI mode tops out at 20MHz here; 26 and 40 both get the card
+	 * through init and then fail send_csd with 0x108. */
+#ifndef SD_SPI_FREQ_KHZ
+#define SD_SPI_FREQ_KHZ SDMMC_FREQ_DEFAULT
+#endif
+	host.max_freq_khz = SD_SPI_FREQ_KHZ;
+
+	spi_bus_config_t bus_cfg = {
+		.mosi_io_num = SD_PIN_MOSI, .miso_io_num = SD_PIN_MISO,
+		.sclk_io_num = SD_PIN_SCLK, .quadwp_io_num = -1,
+		.quadhd_io_num = -1, .max_transfer_sz = 4096,
+	};
+	ret = spi_bus_initialize(SD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+	if (ret != ESP_OK) {
+		printf("SD: spi_bus_initialize failed: %s\n", esp_err_to_name(ret));
+		return NULL;
+	}
+	sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+	slot_config.gpio_cs = SD_PIN_CS;
+	slot_config.host_id = SD_SPI_HOST;
+	ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
+	if (ret != ESP_OK) {
+		printf("SD: mount failed (%s) - sclk=%d mosi=%d miso=%d cs=%d\n",
+			esp_err_to_name(ret), SD_PIN_SCLK, SD_PIN_MOSI, SD_PIN_MISO, SD_PIN_CS);
+		return NULL;
+	}
+	printf("SD: mounted over SPI at %d kHz (sclk=%d mosi=%d miso=%d cs=%d)\n",
+		host.max_freq_khz, SD_PIN_SCLK, SD_PIN_MOSI, SD_PIN_MISO, SD_PIN_CS);
+#else
 	sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 	host.slot = SDMMC_HOST_SLOT_0;
 	host.max_freq_khz = SD_FREQ_KHZ;
-
 #if SOC_SDMMC_IO_POWER_EXTERNAL
 	sd_pwr_ctrl_ldo_config_t ldo_config = { .ldo_chan_id = SD_LDO_CHAN };
 	sd_pwr_ctrl_handle_t pwr_ctrl_handle = NULL;
@@ -313,22 +361,18 @@ static sdmmc_card_t *mount_sdcard(void)
 	}
 	host.pwr_ctrl_handle = pwr_ctrl_handle;
 #endif
-
 	sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
 	slot_config.width = 4;
-	slot_config.clk = SD_PIN_CLK;
-	slot_config.cmd = SD_PIN_CMD;
-	slot_config.d0 = SD_PIN_D0;
-	slot_config.d1 = SD_PIN_D1;
-	slot_config.d2 = SD_PIN_D2;
-	slot_config.d3 = SD_PIN_D3;
+	slot_config.clk = SD_PIN_CLK; slot_config.cmd = SD_PIN_CMD;
+	slot_config.d0 = SD_PIN_D0; slot_config.d1 = SD_PIN_D1;
+	slot_config.d2 = SD_PIN_D2; slot_config.d3 = SD_PIN_D3;
 	slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-
 	ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 	if (ret != ESP_OK) {
 		printf("SD: mount failed (%s) - is a card inserted?\n", esp_err_to_name(ret));
 		return NULL;
 	}
+#endif
 
 	sdmmc_card_print_info(stdout, card);
 	return card;
@@ -775,11 +819,13 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 		if (i && (i % BENCH_PROGRESS_EVERY) == 0) {
 			int64_t now = esp_timer_get_time();
 			uint64_t io_now = g_io.read_us + g_io.seek_us;
-			printf("    ..hunk %" PRIu32 "/%" PRIu32 "  %.3f ms/hunk  io %.3f ms/hunk  heap used %d KB\n",
+			printf("    ..hunk %" PRIu32 "/%" PRIu32 "  %.3f ms/hunk  io %.3f ms/hunk  used %d KB  free %d KB  largest %d KB\n",
 				i, nhunks,
 				(double)(now - prog_t) / 1000.0 / BENCH_PROGRESS_EVERY,
 				(double)(io_now - prog_io) / 1000.0 / BENCH_PROGRESS_EVERY,
-				(int)((heap_at_entry - heap_caps_get_free_size(MALLOC_CAP_DEFAULT)) / 1024));
+				(int)((heap_at_entry - heap_caps_get_free_size(MALLOC_CAP_DEFAULT)) / 1024),
+				(int)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024),
+				(int)(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) / 1024));
 			prog_t = now; prog_io = io_now;
 		}
 #endif
@@ -802,6 +848,16 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	if (bad) {
 		printf("%-48s READ FAILED at hunk %" PRIu32 "/%" PRIu32 ": %s\n",
 			name, bad_hunk, header->totalhunks, chd_error_string(err));
+		printf("  at failure: free %d KB, largest block %d KB, entry free %d KB\n",
+			(int)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024),
+			(int)(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) / 1024),
+			(int)(heap_at_entry / 1024));
+		/* fragmentation vs exhaustion: if total free is still large but the
+		 * largest block is small, the heap is fragmented, not full. */
+		printf("  at failure: free %d KB, largest block %d KB, entry free %d KB\n",
+			(int)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024),
+			(int)(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) / 1024),
+			(int)(heap_at_entry / 1024));
 		printf("  dest[0..31] = ");
 		for (int k = 0; k < 32 && k < (int)header->hunkbytes; k++) printf("%02x", buf[k]);
 		printf("\n");

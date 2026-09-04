@@ -18,3 +18,9 @@ tests/esp32p4/embed/
 tests/esp32p4/fw.elf
 tests/esp32p4/*.log
 contrib/esp32p4/smoke_test.elf
+contrib/esp32p4/idf-benchmark/main/embed/
+contrib/esp32p4/idf-benchmark/main/embed_list.inc
+contrib/esp32p4/idf-benchmark/main/embed_includes.inc
+contrib/esp32p4/idf-benchmark/build/
+contrib/esp32p4/idf-benchmark/sdkconfig
+contrib/esp32p4/idf-benchmark/sdkconfig.old

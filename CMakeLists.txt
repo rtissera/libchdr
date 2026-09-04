@@ -55,6 +55,12 @@ if (WITH_SYSTEM_ZLIB)
 else()
   if(NOT TARGET miniz)
     add_subdirectory(deps/miniz-3.1.2 EXCLUDE_FROM_ALL)
+    # ESP ROMs export an older miniz that would otherwise capture this one
+    # at link time; applied here rather than inside deps/ so a miniz bump
+    # can't drop it. No-op off ESP-IDF.
+    include(${CMAKE_CURRENT_LIST_DIR}/cmake/EspRomMinizWorkaround.cmake)
+    libchdr_apply_esp_rom_miniz_workaround(miniz)
+    set(CHDR_NEEDS_MINIZ_RENAME TRUE)
   endif()
   list(APPEND CHDR_LIBS miniz)
 endif()
@@ -88,6 +94,17 @@ else()
 endif()
 
 if(CHDR_VERIFY_BLOCK_CRC)
+  # The per-hunk CRC chdman stores covers the fully reconstituted hunk, ECC and
+  # sync header included, so a build that skips ecc_generate() cannot match it.
+  # The failure is content-dependent - hunks holding only audio frames have no
+  # ECC to regenerate and still verify - which makes it look like sporadic file
+  # corruption rather than a build misconfiguration. Refuse the combination.
+  if(NOT CHDR_WANT_RAW_DATA_SECTOR)
+    message(FATAL_ERROR
+      "CHDR_VERIFY_BLOCK_CRC=ON requires CHDR_WANT_RAW_DATA_SECTOR=ON: without the "
+      "regenerated ECC and sync header the decoded hunk cannot match the CRC stored "
+      "in the file. Turn CHDR_VERIFY_BLOCK_CRC off as well to build without raw sectors.")
+  endif()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=1)
 else()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)
@@ -124,6 +141,12 @@ set(CHDR_SOURCES
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static INTERFACE include)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+# libchdr_codec_zlib.c calls tinfl_decompress() directly, so it must be renamed
+# alongside miniz's definition - otherwise on ESP-IDF this call binds to the
+# ROM's older copy and we are back to the split decoder this branch fixed.
+if(CHDR_NEEDS_MINIZ_RENAME)
+  libchdr_apply_esp_rom_miniz_workaround(chdr-static)
+endif()
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFINES})
 
 if(MSVC)
@@ -140,6 +163,9 @@ if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr INTERFACE include)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
+  if(CHDR_NEEDS_MINIZ_RENAME)
+    libchdr_apply_esp_rom_miniz_workaround(chdr)
+  endif()
   target_compile_definitions(chdr PRIVATE ${CHDR_DEFINES})
 
   if(MSVC)
@@ -179,5 +205,6 @@ if (BUILD_SHARED_LIBS)
 endif()
 
 if (CHDR_WANT_TESTS)
+  enable_testing()
   add_subdirectory(tests)
 endif()

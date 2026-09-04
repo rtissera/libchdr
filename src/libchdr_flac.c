@@ -8,12 +8,34 @@
 
 ***************************************************************************/
 
+#include <stdlib.h>
 #include <string.h>
 
+#include "../include/libchdr/chdconfig.h"
 #include "../include/libchdr/flac.h"
 #include "../include/libchdr/macros.h"
 #define DR_FLAC_IMPLEMENTATION
 #define DR_FLAC_NO_STDIO
+
+/* dr_flac CRC-checks every FLAC frame it decodes. When libchdr is also
+ * verifying each decoded hunk against the CRC chdman stored, that is the same
+ * data checked twice: a corrupt frame that dr_flac would reject instead decodes
+ * to garbage, and the hunk CRC rejects it one level up with the same
+ * CHDERR_DECOMPRESSION_ERROR. Dropping the inner check is worth ~8% of a CD-FLAC
+ * hunk and 13 KB of text on RV32, where the compiler can then discard dr_flac's
+ * CRC-8 and CRC-16 tables entirely.
+ *
+ * Deliberately tied to VERIFY_BLOCK_CRC and not to any "small target" switch:
+ * VERIFY_BLOCK_CRC is exactly the thing that makes it safe. Without it the
+ * frame CRC is the only integrity check FLAC data gets.
+ *
+ * DR_FLAC_NO_CRC also disables binary-search seeking, which libchdr never uses
+ * - each hunk is opened as a complete stream and read straight through, and
+ * drflac_seek_to_pcm_frame() is never called. */
+#if VERIFY_BLOCK_CRC
+#define DR_FLAC_NO_CRC
+#endif
+
 #include "../include/dr_libs/dr_flac.h"
 
 /***************************************************************************
@@ -52,6 +74,7 @@ int flac_decoder_init(flac_decoder *decoder)
 	decoder->uncompressed_offset = 0;
 	decoder->uncompressed_length = 0;
 	decoder->uncompressed_swap = 0;
+	decoder->alloc_failed = 0;
 	return 0;
 }
 
@@ -74,14 +97,53 @@ void flac_decoder_free(flac_decoder* decoder)
  *-------------------------------------------------
  */
 
+/* drflac_open_with_metadata() allocates the decoder plus a decoded-sample
+ * buffer sized from the STREAMINFO block (for a CD-FLAC hunk that is ~40KB),
+ * and reset() is called once per hunk - so on a small-RAM target this is the
+ * single most likely thing to fail here. Route it through callbacks that
+ * record an allocation failure, so callers can report CHDERR_OUT_OF_MEMORY
+ * instead of lumping it in with a genuine CHDERR_DECOMPRESSION_ERROR. */
+
+static void *flac_decoder_malloc_callback(size_t sz, void *userdata)
+{
+	flac_decoder *decoder = (flac_decoder *)userdata;
+	void *ptr = malloc(sz);
+	if (ptr == NULL)
+		decoder->alloc_failed = 1;
+	return ptr;
+}
+
+static void *flac_decoder_realloc_callback(void *ptr, size_t sz, void *userdata)
+{
+	flac_decoder *decoder = (flac_decoder *)userdata;
+	void *newptr = realloc(ptr, sz);
+	if (newptr == NULL)
+		decoder->alloc_failed = 1;
+	return newptr;
+}
+
+static void flac_decoder_free_callback(void *ptr, void *userdata)
+{
+	(void)userdata;
+	free(ptr);
+}
+
 static int flac_decoder_internal_reset(flac_decoder* decoder)
 {
+	drflac_allocation_callbacks callbacks;
+
+	callbacks.pUserData = decoder;
+	callbacks.onMalloc = flac_decoder_malloc_callback;
+	callbacks.onRealloc = flac_decoder_realloc_callback;
+	callbacks.onFree = flac_decoder_free_callback;
+
 	decoder->compressed_offset = 0;
+	decoder->alloc_failed = 0;
 	flac_decoder_free(decoder);
 	decoder->decoder = drflac_open_with_metadata(
 		flac_decoder_read_callback, flac_decoder_seek_callback,
 		flac_decoder_tell_callback, flac_decoder_metadata_callback,
-		decoder, NULL);
+		decoder, &callbacks);
 	return (decoder->decoder != NULL);
 }
 

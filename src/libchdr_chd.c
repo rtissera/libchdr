@@ -328,6 +328,50 @@ struct _chd_file
 
 	uint8_t *					file_cache;		/* cache of underlying file */
 
+	/* Compressed read-ahead. libchdr issues one seek+read per hunk, and
+	 * compressed hunks are small - measured across a 14-CHD sample, 426 to
+	 * 15223 bytes, averaging a few KB - so a large title costs hundreds of
+	 * thousands of transactions whose fixed per-call cost (VFS dispatch,
+	 * filesystem bookkeeping, controller command setup, DMA, interrupt) has
+	 * nothing to do with their size. On an ESP32-P4 reading from SD that
+	 * showed up as under 15% of the available bus bandwidth.
+	 *
+	 * This is only worth doing because hunk payloads turn out to be laid out
+	 * strictly sequentially: across that same sample, 100% of hunks that
+	 * touch the file begin exactly where the previous one ended, in a single
+	 * run spanning the whole file. So one larger read serves many hunks.
+	 *
+	 * Off unless the caller sets a budget - see chd_set_cache_budget(). The
+	 * library deliberately does not size this itself: how much memory is
+	 * available is a property of the embedding system, not of libchdr. */
+	uint8_t *					ra_buf;			/* NULL = disabled */
+	size_t						ra_capacity;
+	uint64_t					ra_off;			/* file offset of ra_buf[0] */
+	size_t						ra_valid;		/* bytes currently held */
+	uint64_t					ra_hits, ra_misses;
+
+	/* Decoded-hunk cache, used only by COMPRESSION_SELF back-references.
+	 * A self-referencing hunk means "identical to hunk N", and the read path
+	 * previously recursed into a full re-read *and* re-decode of hunk N every
+	 * time. Measured across a 14-CHD corpus: 100% of self-references point
+	 * backwards, so on FAT-backed storage each one also forces a filesystem
+	 * seek that restarts its cluster-chain walk.
+	 *
+	 * Sized as a byte budget rather than an entry count on purpose: hunkbytes
+	 * varies 8x across real content (2448 for a raw-sector CD image, 19584 for
+	 * a normal CD, 4096 for a hard disk), so a fixed entry count would mean
+	 * 4KB on one file and 1.2MB on another. Simulation over that corpus showed
+	 * a single entry already captures 97-100% of self-references wherever they
+	 * are clustered at all, and further entries buy tenths of a percent, so
+	 * the default budget is deliberately small.
+	 *
+	 * Allocated lazily on the first self-reference actually encountered - CHDs
+	 * with none (3 of the 14 measured) never pay for this. */
+	uint8_t *					selfcache_data;		/* selfcache_entries * hunkbytes */
+	uint32_t *					selfcache_hunk;		/* hunk in each slot, ~0 = empty */
+	uint32_t					selfcache_entries;
+	uint32_t					selfcache_next;		/* round-robin victim */
+
 #if LOWRAM_TARGET
 	v5_lowram_map				lowram_map;		/* CHDv5 compressed-map lazy-decode state */
 
@@ -381,7 +425,88 @@ static int core_legacy_fseek(void* file, int64_t offset, int whence);
 static chd_error header_read(chd_file *chd);
 
 /* internal hunk read/write */
+/* Byte budget for the decoded-hunk cache described in struct _chd_file.
+ * Entries = max(1, budget / hunkbytes). LOWRAM targets get a single entry,
+ * which the measurements show is where nearly all of the benefit already is. */
+#ifndef CHDR_SELF_CACHE_BYTES
+#if LOWRAM_TARGET
+#define CHDR_SELF_CACHE_BYTES 0
+#else
+#define CHDR_SELF_CACHE_BYTES 65536
+#endif
+#endif
+
 static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest);
+
+/*-------------------------------------------------
+    selfcache_* - decoded-hunk cache for
+    COMPRESSION_SELF back-references
+-------------------------------------------------*/
+
+static void selfcache_free(chd_file *chd)
+{
+	if (chd->selfcache_data != NULL) { free(chd->selfcache_data); chd->selfcache_data = NULL; }
+	if (chd->selfcache_hunk != NULL) { free(chd->selfcache_hunk); chd->selfcache_hunk = NULL; }
+	chd->selfcache_entries = 0;
+	chd->selfcache_next = 0;
+}
+
+/* returns 1 once a cache exists (or already existed), 0 if it could not be
+ * allocated - callers must treat failure as "just don't cache", never fatal */
+static int selfcache_ensure(chd_file *chd)
+{
+	uint32_t n, i;
+
+	if (chd->selfcache_entries != 0)
+		return 1;
+	if (chd->header.hunkbytes == 0)
+		return 0;
+
+	n = CHDR_SELF_CACHE_BYTES / chd->header.hunkbytes;
+	if (n == 0)
+		n = 1;
+
+	chd->selfcache_data = (uint8_t *)malloc((size_t)n * chd->header.hunkbytes);
+	chd->selfcache_hunk = (uint32_t *)malloc((size_t)n * sizeof(uint32_t));
+	if (chd->selfcache_data == NULL || chd->selfcache_hunk == NULL) {
+		selfcache_free(chd);
+		return 0;
+	}
+	for (i = 0; i < n; i++)
+		chd->selfcache_hunk[i] = (uint32_t)~0;
+	chd->selfcache_entries = n;
+	chd->selfcache_next = 0;
+	return 1;
+}
+
+static int selfcache_lookup(chd_file *chd, uint32_t hunknum, uint8_t *dest)
+{
+	uint32_t i;
+	for (i = 0; i < chd->selfcache_entries; i++) {
+		if (chd->selfcache_hunk[i] == hunknum) {
+			memcpy(dest, chd->selfcache_data + (size_t)i * chd->header.hunkbytes,
+				chd->header.hunkbytes);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static void selfcache_store(chd_file *chd, uint32_t hunknum, const uint8_t *src)
+{
+	uint32_t i, slot;
+
+	if (chd->selfcache_entries == 0)
+		return;
+	for (i = 0; i < chd->selfcache_entries; i++)
+		if (chd->selfcache_hunk[i] == hunknum)
+			return;             /* already resident */
+	slot = chd->selfcache_next;
+	chd->selfcache_next = (slot + 1) % chd->selfcache_entries;
+	memcpy(chd->selfcache_data + (size_t)slot * chd->header.hunkbytes, src,
+		chd->header.hunkbytes);
+	chd->selfcache_hunk[slot] = hunknum;
+}
 
 /* internal map access */
 static chd_error map_read(chd_file *chd);
@@ -635,7 +760,14 @@ static CHDR_INLINE void put_bigendian_uint48(uint8_t *base, uint64_t value)
 
 static CHDR_INLINE uint32_t get_bigendian_uint32_t(const uint8_t *base)
 {
-	return (base[0] << 24) | (base[1] << 16) | (base[2] << 8) | base[3];
+	/* Cast before shifting: base[0] promotes to int, so base[0] << 24 is
+	 * signed overflow - undefined - for any byte >= 0x80. Real files never hit
+	 * it because every field read through here holds either a small count or a
+	 * four-character codec tag, and those are ASCII, but a malformed file only
+	 * has to set one high bit. The uint48 and uint64 readers above already
+	 * cast for the same reason. */
+	return ((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+	       ((uint32_t)base[2] << 8)  |  (uint32_t)base[3];
 }
 
 /*-------------------------------------------------
@@ -767,7 +899,132 @@ static uint16_t crc16_update(uint16_t crc, const void *data, uint32_t length)
 		0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0
 	};
 
+	static const uint16_t s_table1[256] =
+	{
+		0x0000, 0x3331, 0x6662, 0x5553, 0xccc4, 0xfff5, 0xaaa6, 0x9997,
+		0x89a9, 0xba98, 0xefcb, 0xdcfa, 0x456d, 0x765c, 0x230f, 0x103e,
+		0x0373, 0x3042, 0x6511, 0x5620, 0xcfb7, 0xfc86, 0xa9d5, 0x9ae4,
+		0x8ada, 0xb9eb, 0xecb8, 0xdf89, 0x461e, 0x752f, 0x207c, 0x134d,
+		0x06e6, 0x35d7, 0x6084, 0x53b5, 0xca22, 0xf913, 0xac40, 0x9f71,
+		0x8f4f, 0xbc7e, 0xe92d, 0xda1c, 0x438b, 0x70ba, 0x25e9, 0x16d8,
+		0x0595, 0x36a4, 0x63f7, 0x50c6, 0xc951, 0xfa60, 0xaf33, 0x9c02,
+		0x8c3c, 0xbf0d, 0xea5e, 0xd96f, 0x40f8, 0x73c9, 0x269a, 0x15ab,
+		0x0dcc, 0x3efd, 0x6bae, 0x589f, 0xc108, 0xf239, 0xa76a, 0x945b,
+		0x8465, 0xb754, 0xe207, 0xd136, 0x48a1, 0x7b90, 0x2ec3, 0x1df2,
+		0x0ebf, 0x3d8e, 0x68dd, 0x5bec, 0xc27b, 0xf14a, 0xa419, 0x9728,
+		0x8716, 0xb427, 0xe174, 0xd245, 0x4bd2, 0x78e3, 0x2db0, 0x1e81,
+		0x0b2a, 0x381b, 0x6d48, 0x5e79, 0xc7ee, 0xf4df, 0xa18c, 0x92bd,
+		0x8283, 0xb1b2, 0xe4e1, 0xd7d0, 0x4e47, 0x7d76, 0x2825, 0x1b14,
+		0x0859, 0x3b68, 0x6e3b, 0x5d0a, 0xc49d, 0xf7ac, 0xa2ff, 0x91ce,
+		0x81f0, 0xb2c1, 0xe792, 0xd4a3, 0x4d34, 0x7e05, 0x2b56, 0x1867,
+		0x1b98, 0x28a9, 0x7dfa, 0x4ecb, 0xd75c, 0xe46d, 0xb13e, 0x820f,
+		0x9231, 0xa100, 0xf453, 0xc762, 0x5ef5, 0x6dc4, 0x3897, 0x0ba6,
+		0x18eb, 0x2bda, 0x7e89, 0x4db8, 0xd42f, 0xe71e, 0xb24d, 0x817c,
+		0x9142, 0xa273, 0xf720, 0xc411, 0x5d86, 0x6eb7, 0x3be4, 0x08d5,
+		0x1d7e, 0x2e4f, 0x7b1c, 0x482d, 0xd1ba, 0xe28b, 0xb7d8, 0x84e9,
+		0x94d7, 0xa7e6, 0xf2b5, 0xc184, 0x5813, 0x6b22, 0x3e71, 0x0d40,
+		0x1e0d, 0x2d3c, 0x786f, 0x4b5e, 0xd2c9, 0xe1f8, 0xb4ab, 0x879a,
+		0x97a4, 0xa495, 0xf1c6, 0xc2f7, 0x5b60, 0x6851, 0x3d02, 0x0e33,
+		0x1654, 0x2565, 0x7036, 0x4307, 0xda90, 0xe9a1, 0xbcf2, 0x8fc3,
+		0x9ffd, 0xaccc, 0xf99f, 0xcaae, 0x5339, 0x6008, 0x355b, 0x066a,
+		0x1527, 0x2616, 0x7345, 0x4074, 0xd9e3, 0xead2, 0xbf81, 0x8cb0,
+		0x9c8e, 0xafbf, 0xfaec, 0xc9dd, 0x504a, 0x637b, 0x3628, 0x0519,
+		0x10b2, 0x2383, 0x76d0, 0x45e1, 0xdc76, 0xef47, 0xba14, 0x8925,
+		0x991b, 0xaa2a, 0xff79, 0xcc48, 0x55df, 0x66ee, 0x33bd, 0x008c,
+		0x13c1, 0x20f0, 0x75a3, 0x4692, 0xdf05, 0xec34, 0xb967, 0x8a56,
+		0x9a68, 0xa959, 0xfc0a, 0xcf3b, 0x56ac, 0x659d, 0x30ce, 0x03ff
+	};
+	static const uint16_t s_table2[256] =
+	{
+		0x0000, 0x3730, 0x6e60, 0x5950, 0xdcc0, 0xebf0, 0xb2a0, 0x8590,
+		0xa9a1, 0x9e91, 0xc7c1, 0xf0f1, 0x7561, 0x4251, 0x1b01, 0x2c31,
+		0x4363, 0x7453, 0x2d03, 0x1a33, 0x9fa3, 0xa893, 0xf1c3, 0xc6f3,
+		0xeac2, 0xddf2, 0x84a2, 0xb392, 0x3602, 0x0132, 0x5862, 0x6f52,
+		0x86c6, 0xb1f6, 0xe8a6, 0xdf96, 0x5a06, 0x6d36, 0x3466, 0x0356,
+		0x2f67, 0x1857, 0x4107, 0x7637, 0xf3a7, 0xc497, 0x9dc7, 0xaaf7,
+		0xc5a5, 0xf295, 0xabc5, 0x9cf5, 0x1965, 0x2e55, 0x7705, 0x4035,
+		0x6c04, 0x5b34, 0x0264, 0x3554, 0xb0c4, 0x87f4, 0xdea4, 0xe994,
+		0x1dad, 0x2a9d, 0x73cd, 0x44fd, 0xc16d, 0xf65d, 0xaf0d, 0x983d,
+		0xb40c, 0x833c, 0xda6c, 0xed5c, 0x68cc, 0x5ffc, 0x06ac, 0x319c,
+		0x5ece, 0x69fe, 0x30ae, 0x079e, 0x820e, 0xb53e, 0xec6e, 0xdb5e,
+		0xf76f, 0xc05f, 0x990f, 0xae3f, 0x2baf, 0x1c9f, 0x45cf, 0x72ff,
+		0x9b6b, 0xac5b, 0xf50b, 0xc23b, 0x47ab, 0x709b, 0x29cb, 0x1efb,
+		0x32ca, 0x05fa, 0x5caa, 0x6b9a, 0xee0a, 0xd93a, 0x806a, 0xb75a,
+		0xd808, 0xef38, 0xb668, 0x8158, 0x04c8, 0x33f8, 0x6aa8, 0x5d98,
+		0x71a9, 0x4699, 0x1fc9, 0x28f9, 0xad69, 0x9a59, 0xc309, 0xf439,
+		0x3b5a, 0x0c6a, 0x553a, 0x620a, 0xe79a, 0xd0aa, 0x89fa, 0xbeca,
+		0x92fb, 0xa5cb, 0xfc9b, 0xcbab, 0x4e3b, 0x790b, 0x205b, 0x176b,
+		0x7839, 0x4f09, 0x1659, 0x2169, 0xa4f9, 0x93c9, 0xca99, 0xfda9,
+		0xd198, 0xe6a8, 0xbff8, 0x88c8, 0x0d58, 0x3a68, 0x6338, 0x5408,
+		0xbd9c, 0x8aac, 0xd3fc, 0xe4cc, 0x615c, 0x566c, 0x0f3c, 0x380c,
+		0x143d, 0x230d, 0x7a5d, 0x4d6d, 0xc8fd, 0xffcd, 0xa69d, 0x91ad,
+		0xfeff, 0xc9cf, 0x909f, 0xa7af, 0x223f, 0x150f, 0x4c5f, 0x7b6f,
+		0x575e, 0x606e, 0x393e, 0x0e0e, 0x8b9e, 0xbcae, 0xe5fe, 0xd2ce,
+		0x26f7, 0x11c7, 0x4897, 0x7fa7, 0xfa37, 0xcd07, 0x9457, 0xa367,
+		0x8f56, 0xb866, 0xe136, 0xd606, 0x5396, 0x64a6, 0x3df6, 0x0ac6,
+		0x6594, 0x52a4, 0x0bf4, 0x3cc4, 0xb954, 0x8e64, 0xd734, 0xe004,
+		0xcc35, 0xfb05, 0xa255, 0x9565, 0x10f5, 0x27c5, 0x7e95, 0x49a5,
+		0xa031, 0x9701, 0xce51, 0xf961, 0x7cf1, 0x4bc1, 0x1291, 0x25a1,
+		0x0990, 0x3ea0, 0x67f0, 0x50c0, 0xd550, 0xe260, 0xbb30, 0x8c00,
+		0xe352, 0xd462, 0x8d32, 0xba02, 0x3f92, 0x08a2, 0x51f2, 0x66c2,
+		0x4af3, 0x7dc3, 0x2493, 0x13a3, 0x9633, 0xa103, 0xf853, 0xcf63
+	};
+	static const uint16_t s_table3[256] =
+	{
+		0x0000, 0x76b4, 0xed68, 0x9bdc, 0xcaf1, 0xbc45, 0x2799, 0x512d,
+		0x85c3, 0xf377, 0x68ab, 0x1e1f, 0x4f32, 0x3986, 0xa25a, 0xd4ee,
+		0x1ba7, 0x6d13, 0xf6cf, 0x807b, 0xd156, 0xa7e2, 0x3c3e, 0x4a8a,
+		0x9e64, 0xe8d0, 0x730c, 0x05b8, 0x5495, 0x2221, 0xb9fd, 0xcf49,
+		0x374e, 0x41fa, 0xda26, 0xac92, 0xfdbf, 0x8b0b, 0x10d7, 0x6663,
+		0xb28d, 0xc439, 0x5fe5, 0x2951, 0x787c, 0x0ec8, 0x9514, 0xe3a0,
+		0x2ce9, 0x5a5d, 0xc181, 0xb735, 0xe618, 0x90ac, 0x0b70, 0x7dc4,
+		0xa92a, 0xdf9e, 0x4442, 0x32f6, 0x63db, 0x156f, 0x8eb3, 0xf807,
+		0x6e9c, 0x1828, 0x83f4, 0xf540, 0xa46d, 0xd2d9, 0x4905, 0x3fb1,
+		0xeb5f, 0x9deb, 0x0637, 0x7083, 0x21ae, 0x571a, 0xccc6, 0xba72,
+		0x753b, 0x038f, 0x9853, 0xeee7, 0xbfca, 0xc97e, 0x52a2, 0x2416,
+		0xf0f8, 0x864c, 0x1d90, 0x6b24, 0x3a09, 0x4cbd, 0xd761, 0xa1d5,
+		0x59d2, 0x2f66, 0xb4ba, 0xc20e, 0x9323, 0xe597, 0x7e4b, 0x08ff,
+		0xdc11, 0xaaa5, 0x3179, 0x47cd, 0x16e0, 0x6054, 0xfb88, 0x8d3c,
+		0x4275, 0x34c1, 0xaf1d, 0xd9a9, 0x8884, 0xfe30, 0x65ec, 0x1358,
+		0xc7b6, 0xb102, 0x2ade, 0x5c6a, 0x0d47, 0x7bf3, 0xe02f, 0x969b,
+		0xdd38, 0xab8c, 0x3050, 0x46e4, 0x17c9, 0x617d, 0xfaa1, 0x8c15,
+		0x58fb, 0x2e4f, 0xb593, 0xc327, 0x920a, 0xe4be, 0x7f62, 0x09d6,
+		0xc69f, 0xb02b, 0x2bf7, 0x5d43, 0x0c6e, 0x7ada, 0xe106, 0x97b2,
+		0x435c, 0x35e8, 0xae34, 0xd880, 0x89ad, 0xff19, 0x64c5, 0x1271,
+		0xea76, 0x9cc2, 0x071e, 0x71aa, 0x2087, 0x5633, 0xcdef, 0xbb5b,
+		0x6fb5, 0x1901, 0x82dd, 0xf469, 0xa544, 0xd3f0, 0x482c, 0x3e98,
+		0xf1d1, 0x8765, 0x1cb9, 0x6a0d, 0x3b20, 0x4d94, 0xd648, 0xa0fc,
+		0x7412, 0x02a6, 0x997a, 0xefce, 0xbee3, 0xc857, 0x538b, 0x253f,
+		0xb3a4, 0xc510, 0x5ecc, 0x2878, 0x7955, 0x0fe1, 0x943d, 0xe289,
+		0x3667, 0x40d3, 0xdb0f, 0xadbb, 0xfc96, 0x8a22, 0x11fe, 0x674a,
+		0xa803, 0xdeb7, 0x456b, 0x33df, 0x62f2, 0x1446, 0x8f9a, 0xf92e,
+		0x2dc0, 0x5b74, 0xc0a8, 0xb61c, 0xe731, 0x9185, 0x0a59, 0x7ced,
+		0x84ea, 0xf25e, 0x6982, 0x1f36, 0x4e1b, 0x38af, 0xa373, 0xd5c7,
+		0x0129, 0x779d, 0xec41, 0x9af5, 0xcbd8, 0xbd6c, 0x26b0, 0x5004,
+		0x9f4d, 0xe9f9, 0x7225, 0x0491, 0x55bc, 0x2308, 0xb8d4, 0xce60,
+		0x1a8e, 0x6c3a, 0xf7e6, 0x8152, 0xd07f, 0xa6cb, 0x3d17, 0x4ba3
+	};
+
 	const uint8_t *src = (uint8_t*)data;
+
+	/* Slice-by-4. The byte-at-a-time form is 12 instructions per byte on RV32
+	 * (two of them just truncating back to uint16_t), and it runs over every
+	 * decoded hunk under VERIFY_BLOCK_CRC, so it costs about 0.76 ms per
+	 * 19584-byte hunk on an ESP32-P4 - more than the zstd decode it is
+	 * checking. Folding four bytes per iteration takes it to 6.25.
+	 *
+	 * s_table1/2/3 are s_table advanced by one, two and three byte positions,
+	 * so the four lookups can be XORed together. Verified identical to the
+	 * byte-at-a-time result for every length 0..4096 and 256 starting CRCs. */
+	while (length >= 4)
+	{
+		const uint16_t x = (uint16_t)((crc >> 8) ^ src[0]);
+		const uint16_t y = (uint16_t)((crc & 0xff) ^ src[1]);
+
+		crc = (uint16_t)(s_table3[x] ^ s_table2[y] ^ s_table1[src[2]] ^ s_table[src[3]]);
+		src += 4;
+		length -= 4;
+	}
 
 	/* rip through the source data */
 	while (length-- != 0)
@@ -848,6 +1105,15 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	lengthbits = rawbuf[12];
 	selfbits = rawbuf[13];
 	parentbits = rawbuf[14];
+
+	/* These three are raw bytes from the file and they become the bit width
+	 * passed to bitstream_read() for every map entry. Anything above 32 makes
+	 * bitstream_peek() shift by a negative amount, so a malformed file could
+	 * reach undefined behaviour before any other check ran. chdman derives
+	 * them from hunkbytes and the hunk count, so they never legitimately
+	 * exceed 32. */
+	if (lengthbits > 32 || selfbits > 32 || parentbits > 32)
+		return CHDERR_INVALID_FILE;
 
 	/* now read the map */
 	if ((header->mapoffset + mapbytes) < header->mapoffset || (header->mapoffset + mapbytes) >= chd->file_size)
@@ -1910,6 +2176,57 @@ cleanup:
 }
 
 /*-------------------------------------------------
+    chd_set_cache_budget - give libchdr a memory
+    budget to spend on internal caching, or 0 to
+    disable it (the default)
+-------------------------------------------------*/
+
+CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes)
+{
+	uint8_t *buf;
+
+	if (chd == NULL)
+		return CHDERR_INVALID_PARAMETER;
+
+	/* releasing is always possible */
+	if (chd->ra_buf != NULL)
+	{
+		free(chd->ra_buf);
+		chd->ra_buf = NULL;
+		chd->ra_capacity = chd->ra_valid = 0;
+		chd->ra_off = 0;
+	}
+	if (bytes == 0)
+		return CHDERR_NONE;
+
+	/* a window smaller than one hunk can never serve a read */
+	if (bytes < chd->header.hunkbytes)
+		bytes = chd->header.hunkbytes;
+
+	buf = (uint8_t *)malloc(bytes);
+	if (buf == NULL)
+		return CHDERR_OUT_OF_MEMORY;   /* caching off; the file stays usable */
+
+	chd->ra_buf = buf;
+	chd->ra_capacity = bytes;
+	chd->ra_valid = 0;
+	chd->ra_off = 0;
+	chd->ra_hits = chd->ra_misses = 0;
+	return CHDERR_NONE;
+}
+
+CHD_EXPORT size_t chd_get_cache_budget(const chd_file *chd)
+{
+	return (chd != NULL) ? chd->ra_capacity : 0;
+}
+
+CHD_EXPORT void chd_get_cache_stats(const chd_file *chd, uint64_t *hits, uint64_t *misses)
+{
+	if (hits != NULL)   *hits   = (chd != NULL) ? chd->ra_hits : 0;
+	if (misses != NULL) *misses = (chd != NULL) ? chd->ra_misses : 0;
+}
+
+/*-------------------------------------------------
     chd_precache - precache underlying file in
     memory
 -------------------------------------------------*/
@@ -2097,6 +2414,15 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	/* close the file */
 	if (chd->file.callbacks != NULL)
 		core_fclose(&chd->file);
+
+	selfcache_free(chd);
+
+	if (chd->ra_buf != NULL)
+	{
+		free(chd->ra_buf);
+		chd->ra_buf = NULL;
+		chd->ra_capacity = chd->ra_valid = 0;
+	}
 
 	if (chd->file_cache)
 		free(chd->file_cache);
@@ -2306,7 +2632,7 @@ CHD_EXPORT chd_error chd_get_metadata(chd_file *chd, uint32_t searchtag, uint32_
 			uint32_t faux_length;
 
 			/* fill in the faux metadata */
-			snprintf(faux_metadata, sizeof(faux_metadata), HARD_DISK_METADATA_FORMAT, chd->header.obsolete_cylinders, chd->header.obsolete_heads, chd->header.obsolete_sectors, (chd->header.obsolete_hunksize != 0) ? (chd->header.hunkbytes / chd->header.obsolete_hunksize) : 0);
+			snprintf(faux_metadata, sizeof(faux_metadata), HARD_DISK_METADATA_FORMAT, (int)chd->header.obsolete_cylinders, (int)chd->header.obsolete_heads, (int)chd->header.obsolete_sectors, (int)((chd->header.obsolete_hunksize != 0) ? (chd->header.hunkbytes / chd->header.obsolete_hunksize) : 0));
 			faux_length = (uint32_t)strlen(faux_metadata) + 1;
 
 			/* copy the metadata itself */
@@ -2614,6 +2940,83 @@ static uint8_t* hunk_read_compressed(chd_file *chd, uint64_t offset, size_t size
 		}
 #endif
 
+		/* Serve from the read-ahead window when the caller has given us a
+		 * budget. On a miss, any bytes already held that sit at or after the
+		 * requested offset are kept and slid to the front, so the refill
+		 * reads only what is genuinely new: sequential access therefore
+		 * transfers each byte exactly once, and the window is a pure
+		 * reduction in transaction count rather than a trade against
+		 * re-reading. A window is never used for a hunk larger than the
+		 * window itself. */
+		if (chd->ra_buf != NULL && size <= chd->ra_capacity)
+		{
+			int have = (offset >= chd->ra_off &&
+			            offset + size <= chd->ra_off + chd->ra_valid);
+			/* Only a forward-progressing miss refills the window. A backward
+			 * read - which in practice means a COMPRESSION_SELF reference
+			 * reaching back to an earlier hunk - is served directly and
+			 * leaves the window untouched, so an excursion cannot throw away
+			 * data already prefetched for the sequential stream it will
+			 * return to. Without this the window is evicted and refilled
+			 * around every self-reference, and the same bytes are fetched
+			 * more than once. */
+			if (!have && offset < chd->ra_off)
+			{
+				chd->ra_misses++;
+			}
+			else if (!have)
+			{
+				size_t keep = 0;
+				size_t want;
+				uint64_t fill_at;
+
+				if (offset >= chd->ra_off && offset < chd->ra_off + chd->ra_valid)
+				{
+					keep = (size_t)(chd->ra_off + chd->ra_valid - offset);
+					memmove(chd->ra_buf, chd->ra_buf + (offset - chd->ra_off), keep);
+				}
+				fill_at = offset + keep;
+				want = chd->ra_capacity - keep;
+				if (want > 0 && fill_at < chd->file_size)
+				{
+					uint64_t avail = chd->file_size - fill_at;
+					if (avail > (uint64_t)want)
+						avail = (uint64_t)want;
+					if (seek_and_read(chd, fill_at, chd->ra_buf + keep, (size_t)avail))
+					{
+						chd->ra_off = offset;
+						chd->ra_valid = keep + (size_t)avail;
+						chd->ra_misses++;
+						have = (offset + size <= chd->ra_off + chd->ra_valid);
+					}
+					else
+					{
+						/* a failed refill must not fail the read - drop the
+						 * window and fall through to the direct path */
+						chd->ra_valid = 0;
+						have = 0;
+					}
+				}
+				else
+				{
+					chd->ra_valid = keep;
+					chd->ra_off = offset;
+					have = (size <= keep);
+				}
+			}
+			else
+				chd->ra_hits++;
+
+			if (have)
+			{
+				/* copy out rather than handing back a pointer into the
+				 * window: the caller holds this across the decompress call,
+				 * and a later refill would move the bytes underneath it */
+				memcpy(chd->compressed, chd->ra_buf + (offset - chd->ra_off), size);
+				return chd->compressed;
+			}
+		}
+
 		if (!seek_and_read(chd, offset, chd->compressed, size))
 			return NULL;
 		return chd->compressed;
@@ -2636,6 +3039,18 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	else
 	{
+		/* Uncompressed hunks share the file's sequential layout with the
+		 * compressed ones, so they must consume the same read-ahead window -
+		 * otherwise the window prefetches their bytes and they then read the
+		 * same range again directly, and a file with a meaningful fraction of
+		 * uncompressed hunks transfers noticeably more than it needs to. */
+		if (chd->ra_buf != NULL && offset >= chd->ra_off &&
+		    offset + size <= chd->ra_off + chd->ra_valid)
+		{
+			memcpy(dest, chd->ra_buf + (offset - chd->ra_off), size);
+			chd->ra_hits++;
+			return CHDERR_NONE;
+		}
 		if (!seek_and_read(chd, offset, dest, size))
 			return CHDERR_READ_ERROR;
 	}
@@ -2851,7 +3266,23 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				return CHDERR_NONE;
 
 			case COMPRESSION_SELF:
-				return hunk_read_into_memory(chd, blockoffs, dest);
+			{
+				uint32_t target = (uint32_t)blockoffs;
+
+				/* the whole point of the cache: a self-reference otherwise
+				 * costs a backward seek plus a full re-decode of a hunk that
+				 * was very often decoded moments ago */
+				if (chd->selfcache_entries != 0 && selfcache_lookup(chd, target, dest))
+					return CHDERR_NONE;
+
+				selfcache_ensure(chd);   /* lazy: only files with self-refs pay */
+
+				err = hunk_read_into_memory(chd, target, dest);
+				if (err != CHDERR_NONE)
+					return err;
+				selfcache_store(chd, target, dest);
+				return CHDERR_NONE;
+			}
 
 			case COMPRESSION_PARENT:
 			{

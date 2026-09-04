@@ -1,0 +1,43 @@
+# Waveshare ESP32-P4-NANO: 16MB NOR flash, 32MB PSRAM (in-package, not used
+# by this benchmark - everything here fits in internal 768KB HP L2MEM).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# LZMA/zstd dictionaries and the FLAC/huffman decoders' local buffers can run
+# deep call chains - default main task stack (3.5KB) is cut close for that,
+# same margin tests/esp32p4/fw.c's QEMU probe already measured peak-heap
+# against (this only affects *stack*, not the numbers printed there).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# esp_timer_get_time() is the only ESP-IDF facility this benchmark needs -
+# everything else (Wi-Fi/BT co-processor, Ethernet, USB host, SD/MMC) stays
+# off since none of it is exercised by the flash-embedded corpus.
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=2048
+
+# Heap poisoning was a diagnostic for the decompression failures that turned
+# out to be an ESP ROM miniz symbol collision (see components/libchdr/
+# CMakeLists.txt). Root-caused, so it is off: it costs on every malloc/free,
+# and the CD-FLAC path allocates ~40KB per hunk.
+CONFIG_HEAP_POISONING_DISABLED=y
+
+# Onboard TF/SD card slot (native SDMMC slot 0, GPIO43/44/39-42, LDO chan 4)
+# - the real deployment storage path, not the flash-embedded corpus above.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
+# Bottleneck sweep (Pass C) result: -O2 is worth 1.28x on pure decode and
+# 1.10x end-to-end from SD; heap poisoning off adds 1.01x; raising the SD
+# clock from the 20MHz default to 40MHz adds only 1.05x - the workload is
+# decode-bound, not bus-bound. Cumulative 1.17x from SD, 1.28x decode-only.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# FatFs walks the FAT cluster chain on every f_lseek, and restarts from the
+# first cluster on any *backward* seek. libchdr's COMPRESSION_SELF hunks are
+# always backward references (measured: 100% of them, across all 14 sample
+# files), so a self-ref-heavy CHD pays a full chain walk per hunk. On a
+# 271328-hunk, 29.2%-self-ref file this took the read from 2.7 to 85 ms/hunk
+# and made the run look hung. The CLMT makes lseek O(1): same 14 minutes then
+# covered hunk 25000 vs 245000, ~10x. Every file on this card is a single
+# fragment, so the default 64-word table is ~20x larger than needed here.
+CONFIG_FATFS_USE_FASTSEEK=y

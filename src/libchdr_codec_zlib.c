@@ -4,13 +4,71 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CHDR_SYSTEM_ZLIB
 static voidpf zlib_fast_alloc(voidpf opaque, zlib_alloc_size items, zlib_alloc_size size);
 static void zlib_fast_free(voidpf opaque, voidpf address);
 static void zlib_allocator_free(voidpf opaque);
+#endif
 
 /*-------------------------------------------------
     zlib_codec_init - initialize the ZLIB codec
 -------------------------------------------------*/
+
+#ifndef CHDR_SYSTEM_ZLIB
+
+/* ---- bundled miniz: drive tinfl directly, no 32KB dictionary ---- */
+
+chd_error zlib_codec_init(void *codec, uint32_t hunkbytes)
+{
+	zlib_codec_data *data = (zlib_codec_data *)codec;
+
+	(void)hunkbytes;
+
+	memset(data, 0, sizeof(zlib_codec_data));
+	data->inflater = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+	if (data->inflater == NULL)
+		return CHDERR_OUT_OF_MEMORY;
+	tinfl_init(data->inflater);
+	return CHDERR_NONE;
+}
+
+void zlib_codec_free(void *codec)
+{
+	zlib_codec_data *data = (zlib_codec_data *)codec;
+
+	if (data != NULL && data->inflater != NULL)
+	{
+		free(data->inflater);
+		data->inflater = NULL;
+	}
+}
+
+chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
+{
+	zlib_codec_data *data = (zlib_codec_data *)codec;
+	size_t in_bytes = complen;
+	size_t out_bytes = destlen;
+	tinfl_status status;
+
+	if (data->inflater == NULL)
+		return CHDERR_DECOMPRESSION_ERROR;
+
+	/* one hunk == one complete raw-deflate stream, decoded in a single call
+	 * into a buffer that holds all of it: no zlib header, no further input to
+	 * come, and the output buffer doubles as the dictionary */
+	tinfl_init(data->inflater);
+	status = tinfl_decompress(data->inflater, (const mz_uint8 *)src, &in_bytes,
+		(mz_uint8 *)dest, (mz_uint8 *)dest, &out_bytes,
+		TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+
+	if (status != TINFL_STATUS_DONE || out_bytes != destlen) {
+		return CHDERR_DECOMPRESSION_ERROR;
+	}
+
+	return CHDERR_NONE;
+}
+
+#else /* CHDR_SYSTEM_ZLIB */
 
 chd_error zlib_codec_init(void *codec, uint32_t hunkbytes)
 {
@@ -79,16 +137,22 @@ chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	data->inflater.avail_out = destlen;
 	data->inflater.total_out = 0;
 	zerr = inflateReset(&data->inflater);
-	if (zerr != Z_OK)
+	if (zerr != Z_OK) {
 		return CHDERR_DECOMPRESSION_ERROR;
+	}
 
 	/* do it */
 	zerr = inflate(&data->inflater, Z_FINISH);
-	if (data->inflater.total_out != destlen)
+	if (data->inflater.total_out != destlen) {
 		return CHDERR_DECOMPRESSION_ERROR;
+	}
 
 	return CHDERR_NONE;
 }
+
+#endif /* CHDR_SYSTEM_ZLIB */
+
+#ifdef CHDR_SYSTEM_ZLIB
 
 /*-------------------------------------------------
     zlib_fast_alloc - fast malloc for ZLIB, which
@@ -178,3 +242,5 @@ static void zlib_allocator_free(voidpf opaque)
 		if (alloc->allocptr[i])
 			free(alloc->allocptr[i]);
 }
+
+#endif /* CHDR_SYSTEM_ZLIB */

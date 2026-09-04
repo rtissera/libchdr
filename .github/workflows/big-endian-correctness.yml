@@ -1,0 +1,105 @@
+name: Big-endian correctness
+
+# Every other CI target is little-endian: x86_64, ARM (android/switch/vita/
+# cross-platform-actions) and RISC-V (esp32p4/rp2350/rv32/bl616). Nothing
+# exercises a big-endian host, even though libchdr supports one on purpose -
+# get_bigendian_uint32_t/uint64_t parse the header, and the FLAC codecs pick
+# their sample byte order at runtime from flac_decoder_detect_native_endian().
+#
+# That combination is the dangerous one: endian bugs here are silent. A
+# decoder that swaps the wrong way still returns CHDERR_NONE and still passes
+# the per-hunk CRC when that CRC is computed over the same wrongly-ordered
+# bytes; only comparing decoded output against a known-good host catches it.
+# Word-at-a-time optimisations are where this bites - the ECC P/Q parity SWAR
+# and the slice-by-4 CRC16 both assemble 32-bit words out of individual bytes
+# today, and both would break if either were rewritten to load words directly.
+#
+# Two targets, because endianness and word size fail independently:
+#   powerpc  32-bit BE - the GameCube/Wii model (Gekko/Broadway), which
+#                        RetroArch ships ports for; BE combined with ILP32.
+#   s390x    64-bit BE - catches anything that only misbehaves at 64-bit.
+#
+# Both decode the whole seed corpus under qemu-user and must produce bytes
+# identical to a native little-endian x86_64 decode of the same file.
+
+on: [push, pull_request]
+
+jobs:
+  big-endian-correctness:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: powerpc
+            pkg: gcc-powerpc-linux-gnu
+            libc: libc6-dev-powerpc-cross
+            cc: powerpc-linux-gnu-gcc
+            qemu: qemu-ppc-static
+            sysroot: /usr/powerpc-linux-gnu
+            note: 32-bit big-endian (GameCube/Wii class)
+          - arch: s390x
+            pkg: gcc-s390x-linux-gnu
+            libc: libc6-dev-s390x-cross
+            cc: s390x-linux-gnu-gcc
+            qemu: qemu-s390x-static
+            sysroot: /usr/s390x-linux-gnu
+            note: 64-bit big-endian
+
+    name: ${{ matrix.arch }} (${{ matrix.note }})
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install chdman, ${{ matrix.arch }} cross-toolchain and qemu-user
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mame-tools ${{ matrix.pkg }} ${{ matrix.libc }} qemu-user-static
+
+      - name: Generate corpus seeds
+        run: tests/corpus/generate.sh
+
+      - name: Build native (little-endian x86_64)
+        run: |
+          cmake -B build-le -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-le --target chd_dump_order -j$(nproc)
+
+      - name: Build big-endian (${{ matrix.arch }})
+        run: |
+          cmake -B build-be -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.arch }} \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          cmake --build build-be --target chd_dump_order -j$(nproc)
+
+      - name: Confirm the binary really is big-endian
+        run: |
+          set -euo pipefail
+          file build-be/tests/chd_dump_order
+          # "MSB" in the ELF header is the whole point of this job; if the
+          # cross-compiler silently fell back to the host one, everything
+          # below would pass while testing nothing.
+          file build-be/tests/chd_dump_order | grep -q 'MSB' \
+            || { echo "build-be is not a big-endian binary"; exit 1; }
+
+      - name: Byte-identical decode, every seed x every read order
+        run: |
+          set -euo pipefail
+          LE=build-le/tests/chd_dump_order
+          BE="${{ matrix.qemu }} -L ${{ matrix.sysroot }} build-be/tests/chd_dump_order"
+          fail=0
+          total=0
+          for f in tests/corpus/seeds/*.chd; do
+            for order in sequential reverse random:1 random:42; do
+              total=$((total+1))
+              "$LE" "$f" "$order" > /tmp/le.bin
+              $BE "$f" "$order" > /tmp/be.bin
+              if ! cmp -s /tmp/le.bin /tmp/be.bin; then
+                echo "MISMATCH: $(basename "$f") $order"
+                fail=$((fail+1))
+              fi
+            done
+          done
+          echo "$total checks, $fail mismatches"
+          [ "$fail" -eq 0 ]

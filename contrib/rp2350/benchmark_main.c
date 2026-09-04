@@ -32,6 +32,14 @@
 #ifndef BENCH_PROGRESS_EVERY
 #define BENCH_PROGRESS_EVERY 2000 /* 0 = silent */
 #endif
+/* 32KB measured as the knee on this board: 1.05-1.12x for +33KB of heap,
+ * while 64KB doubles the cost for under 0.7% more and 256KB buys nothing.
+ * The budget is a ceiling, so on an image whose hunks exceed it (AVHuff is
+ * 223,668 bytes) caching simply stays off rather than over-allocating.
+ * Set 0 to disable. */
+#ifndef BENCH_CACHE_BUDGET
+#define BENCH_CACHE_BUDGET (32 * 1024)
+#endif
 
 /* ---- files under test; missing entries are skipped, not fatal ---- */
 static const char *const g_files[] = {
@@ -140,6 +148,17 @@ static int run_one(const char *path)
         f_close(&sf.fil);
         return 0;
     }
+#if BENCH_CACHE_BUDGET
+    err = chd_set_cache_budget(chd, BENCH_CACHE_BUDGET);
+    if (err != CHDERR_NONE) {
+        /* not fatal: caching stays off and the file remains usable */
+        printf("%-34s cache budget %u B refused: %s\n", basename_of(path),
+               (unsigned)BENCH_CACHE_BUDGET, chd_error_string(err));
+    } else if (chd_get_cache_budget(chd) == 0) {
+        printf("%-34s cache off: hunk exceeds the %u B budget\n",
+               basename_of(path), (unsigned)BENCH_CACHE_BUDGET);
+    }
+#endif
     peak_sample();
 
     const chd_header *h = chd_get_header(chd);
@@ -178,6 +197,9 @@ static int run_one(const char *path)
     uint64_t us = time_us_64() - t0;
     uint64_t io_us = sf.io_us - io_at_start;
 
+    uint64_t chits = 0, cmisses = 0;
+    chd_get_cache_stats(chd, &chits, &cmisses);
+
     free(buf);
     chd_close(chd);
     f_close(&sf.fil);
@@ -193,6 +215,11 @@ static int run_one(const char *path)
            100.0 * (double)io_us / (double)us,
            (double)us / 1000.0 / n,
            (unsigned)g_peak, (unsigned long long)hsh);
+    if (chits + cmisses)
+        printf("%-34s   cache %u B: hit=%llu miss=%llu (%.0f%%)\n", "",
+               (unsigned)BENCH_CACHE_BUDGET, (unsigned long long)chits,
+               (unsigned long long)cmisses,
+               100.0 * (double)chits / (double)(chits + cmisses));
     return 1;
 }
 

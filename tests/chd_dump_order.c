@@ -70,7 +70,17 @@ int main(int argc, char **argv)
 		}
 		/* prefix each hunk with its logical index so the diff pinpoints which
 		 * hunk mismatched, regardless of read order */
-		fwrite(&order[i], sizeof(uint32_t), 1, stdout);
+		{
+			/* Write the index as four explicit bytes rather than a raw
+			 * uint32_t: a host-endian write makes this dump differ between
+			 * big- and little-endian builds even when the decoded data is
+			 * identical, which would defeat cross-endian comparison. */
+			const uint8_t idx[4] = {
+				(uint8_t)(order[i] >> 24), (uint8_t)(order[i] >> 16),
+				(uint8_t)(order[i] >> 8),  (uint8_t)order[i]
+			};
+			fwrite(idx, 1, sizeof(idx), stdout);
+		}
 		fwrite(buf, 1, h->hunkbytes, stdout);
 	}
 

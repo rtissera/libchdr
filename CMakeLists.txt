@@ -105,6 +105,18 @@ if(CHDR_VERIFY_BLOCK_CRC)
       "regenerated ECC and sync header the decoded hunk cannot match the CRC stored "
       "in the file. Turn CHDR_VERIFY_BLOCK_CRC off as well to build without raw sectors.")
   endif()
+  # Same reasoning for the subcode: the stored CRC covers all 2448 bytes of each
+  # frame, so leaving the 96 subcode bytes unwritten cannot match it either. This
+  # one is worse to diagnose - the bytes keep whatever the caller had in the
+  # output buffer, so it passes against a freshly mmapped (zero) buffer and fails
+  # once the caller reuses one, and it reports CHDERR_DECOMPRESSION_ERROR on data
+  # that is perfectly good.
+  if(NOT CHDR_WANT_SUBCODE)
+    message(FATAL_ERROR
+      "CHDR_VERIFY_BLOCK_CRC=ON requires CHDR_WANT_SUBCODE=ON: the stored CRC covers "
+      "the subcode bytes too, so a build that does not write them cannot match it. "
+      "Turn CHDR_VERIFY_BLOCK_CRC off as well to build without subcode.")
+  endif()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=1)
 else()
   list(APPEND CHDR_DEFINES VERIFY_BLOCK_CRC=0)

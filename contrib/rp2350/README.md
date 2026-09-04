@@ -77,3 +77,69 @@ corpus. No RP2350 hardware in CI, so this can't prove `chd_open()`/
 `chd_read()` work at runtime against real flash/SD storage - only that
 neither build regresses correctness or blows past budget on what CI *can*
 see.
+
+## Real-hardware benchmark (this directory)
+
+The CI workflows above run under QEMU and measure RAM only; as their note
+says, they cannot prove `chd_open()`/`chd_read()` work against real storage.
+`benchmark_main.c` closes that gap: it runs on an actual Waveshare
+RP2350-PiZero (RP2350B, Cortex-M33 @150MHz, 520KB SRAM, 16MB flash) and
+reads CHDs from the onboard microSD.
+
+Per file it reports wall time, decoded and compressed throughput, the share
+of time spent inside FatFs/SPI rather than decoding, per-hunk latency, peak
+heap, and an FNV-1a hash of the decoded output. The hash is the point of
+running on silicon rather than QEMU: it shows the decode is byte-identical
+to a desktop build, not merely that it completed.
+
+It does **not** reuse `../tangcore-bl616/chd/chd_fatfs.c`, which is the
+generic bridge to prefer for real integrations. This harness needs to time
+each `f_read`/`f_lseek` to separate storage cost from decode cost, so it
+carries its own instrumented copy of the same callbacks. Use `chd_fatfs.c`
+for anything that is not measuring I/O.
+
+Peak heap is polled via `mallinfo()` rather than `-Wl,--wrap=malloc`: the
+wrap symbols collide with `pico_malloc`'s own, and on rv32 wrapping produced
+unexplained corruption at real-content scale where polling did not.
+
+### Wiring
+
+microSD is on SPI1 - SCK=GPIO30, MOSI=GPIO31, MISO=GPIO40, CS=GPIO43, with
+CS driven in software rather than by the SPI block (`hw_config.c`). GPIO 40
+and 43 exist only on the RP2350B, which is why the SDK board header sets
+`PICO_RP2350A 0`.
+
+### Building
+
+Needs the Pico SDK and carlk3's SD/FatFs library; neither is vendored.
+
+    export PICO_SDK_PATH=/path/to/pico-sdk
+    export SDFAT_PATH=/path/to/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+    cmake -S contrib/rp2350 -B build-rp2350 -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-rp2350 -j
+
+`-DLOWRAM_TARGET_VAL=0|1` (default 1), `-DBENCH_HUNK_CAP=N` (default 0 =
+every hunk) and `-DSD_BAUD_HZ=N` (default 25000000).
+
+The SD clock is worth more than any codec-side tuning found on this board.
+Measured over three I/O-heavy files, 12 MHz -> 25 MHz is 1.219x aggregate
+(kinst2 1.378x, Insanity 1.261x, Shadowrun 1.169x) with byte-identical
+output; the gain tracks each file's I/O share, and io% falls roughly in
+proportion to the clock. 25 MHz is the SD Default Speed rate and SPI mode
+has no open-drain derating, so it is in spec - but MCU SPI blocks and board
+routing do not always meet timing there, so drop it if a card misbehaves.
+
+### Flashing
+
+Hold BOOT while plugging in USB, then copy the UF2 onto the `RP2350` volume.
+After the first flash the SDK's reset interface is present, so a 1200-baud
+touch re-enters BOOTSEL without the button:
+
+    python3 -c "import serial,time; s=serial.Serial('/dev/ttyACM0',1200); \
+                s.dtr=False; time.sleep(0.3); s.close()"
+    cp build-rp2350/rp2350-bench.uf2 /media/$USER/RP2350/
+
+Two gotchas on this board: it has two USB-C ports and only one is the
+RP2350's device port - the other is a PIO-USB host port and fails to
+enumerate (`error -71`). And `pico_stdio_usb` stays silent until the host
+asserts DTR, so a monitor that leaves DTR low sees nothing.

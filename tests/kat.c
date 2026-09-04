@@ -26,7 +26,7 @@
 #include <libchdr/cdrom.h>
 
 /* not exposed in a public header, but a global symbol in libchdr_chd.c */
-extern uint16_t crc16(const void *data, uint32_t length);
+extern uint16_t chd_crc16(const void *data, uint32_t length);
 
 static uint64_t rng_state;
 
@@ -149,7 +149,7 @@ static int kat_crc16(void)
 
 	/* every length 0..4096 covers all four slice-by-4 tail cases */
 	for (len = 0; len <= 4096; len++) {
-		uint16_t c = crc16(buf, len);
+		uint16_t c = chd_crc16(buf, len);
 		uint8_t be[2];
 		be[0] = (uint8_t)(c >> 8);
 		be[1] = (uint8_t)c;
@@ -158,7 +158,7 @@ static int kat_crc16(void)
 	/* real geometries at several start offsets */
 	for (g = 0; g < sizeof(geo) / sizeof(*geo); g++) {
 		for (off = 0; off < 8; off++) {
-			uint16_t c = crc16(buf + off, geo[g]);
+			uint16_t c = chd_crc16(buf + off, geo[g]);
 			uint8_t be[2];
 			be[0] = (uint8_t)(c >> 8);
 			be[1] = (uint8_t)c;

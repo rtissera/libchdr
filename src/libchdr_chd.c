@@ -1033,9 +1033,9 @@ static uint16_t crc16_update(uint16_t crc, const void *data, uint32_t length)
 }
 
 /*-------------------------------------------------
-    crc16 - calculate CRC16 (from hashing.cpp)
+    chd_crc16 - calculate CRC16 (from hashing.cpp)
 -------------------------------------------------*/
-uint16_t crc16(const void *data, uint32_t length)
+uint16_t chd_crc16(const void *data, uint32_t length)
 {
 	return crc16_update(0xffff, data, length);
 }
@@ -1272,7 +1272,7 @@ static chd_error decompress_v5_map(chd_file* chd, chd_header* header)
 	delete_huffman_decoder(decoder);
 
 	/* verify the final CRC */
-	if (crc16(&header->rawmap[0], header->hunkcount * 12) != mapcrc)
+	if (chd_crc16(&header->rawmap[0], header->hunkcount * 12) != mapcrc)
 		return CHDERR_DECOMPRESSION_ERROR;
 
 	return CHDERR_NONE;
@@ -2199,9 +2199,15 @@ CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes)
 	if (bytes == 0)
 		return CHDERR_NONE;
 
-	/* a window smaller than one hunk can never serve a read */
+	/* The budget is a ceiling, not a target: never allocate more than the
+	 * caller allowed. A window smaller than one hunk cannot serve a read, so
+	 * such a budget leaves caching off rather than silently exceeding it -
+	 * which matters because hunkbytes varies enormously (19,584 for a CD,
+	 * 223,668 for AVHuff), so a fixed budget that rounded up would allocate
+	 * over ten times what was asked on some images. chd_get_cache_budget()
+	 * reports what was actually taken. */
 	if (bytes < chd->header.hunkbytes)
-		bytes = chd->header.hunkbytes;
+		return CHDERR_NONE;
 
 	buf = (uint8_t *)malloc(bytes);
 	if (buf == NULL)
@@ -3250,7 +3256,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				if (err != CHDERR_NONE)
 					return err;
 #if VERIFY_BLOCK_CRC
-				if (crc16(dest, chd->header.hunkbytes) != blockcrc)
+				if (chd_crc16(dest, chd->header.hunkbytes) != blockcrc)
 					return CHDERR_DECOMPRESSION_ERROR;
 #endif
 				return CHDERR_NONE;
@@ -3260,7 +3266,7 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				if (err != CHDERR_NONE)
 					return err;
 #if VERIFY_BLOCK_CRC
-				if (crc16(dest, chd->header.hunkbytes) != blockcrc)
+				if (chd_crc16(dest, chd->header.hunkbytes) != blockcrc)
 					return CHDERR_DECOMPRESSION_ERROR;
 #endif
 				return CHDERR_NONE;

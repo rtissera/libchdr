@@ -407,8 +407,15 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd);
  * May be called at any time on an open file; lowering or zeroing it frees
  * immediately. Returns CHDERR_OUT_OF_MEMORY if the budget could not be
  * allocated, in which case caching stays off and the file remains fully
- * usable. A budget below one hunk is rounded up, since a smaller window
- * could never serve a read. */
+ * usable.
+ *
+ * The value is a ceiling: libchdr never allocates more than this. A window
+ * smaller than one hunk cannot serve a read, so a budget below hunkbytes
+ * leaves caching off rather than exceeding the budget - hunkbytes ranges from
+ * 19,584 bytes on a CD image to 223,668 on AVHuff, so rounding up would
+ * allocate more than ten times the stated budget on some files. Call
+ * chd_get_cache_budget() to see what was actually taken; it returns 0 when
+ * caching is off. */
 CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes);
 CHD_EXPORT size_t chd_get_cache_budget(const chd_file *chd);
 

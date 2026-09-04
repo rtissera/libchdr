@@ -2199,9 +2199,15 @@ CHD_EXPORT chd_error chd_set_cache_budget(chd_file *chd, size_t bytes)
 	if (bytes == 0)
 		return CHDERR_NONE;
 
-	/* a window smaller than one hunk can never serve a read */
+	/* The budget is a ceiling, not a target: never allocate more than the
+	 * caller allowed. A window smaller than one hunk cannot serve a read, so
+	 * such a budget leaves caching off rather than silently exceeding it -
+	 * which matters because hunkbytes varies enormously (19,584 for a CD,
+	 * 223,668 for AVHuff), so a fixed budget that rounded up would allocate
+	 * over ten times what was asked on some images. chd_get_cache_budget()
+	 * reports what was actually taken. */
 	if (bytes < chd->header.hunkbytes)
-		bytes = chd->header.hunkbytes;
+		return CHDERR_NONE;
 
 	buf = (uint8_t *)malloc(bytes);
 	if (buf == NULL)

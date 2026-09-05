@@ -15,8 +15,31 @@
 #define VERIFY_BLOCK_CRC        1
 #endif
 
-/* Trade CPU for RAM across several independent levers, for
- * memory-constrained targets (e.g. the BL616/RV32 port, 480KB SRAM):
+#ifndef LOWRAM_TARGET
+#define LOWRAM_TARGET              0
+#endif
+
+/* 1 = CD codecs keep a private hunk-sized scratch buffer and write the
+ * caller's buffer once at the end; 0 = decode into the caller's buffer and
+ * spread the sectors out in place, which needs only a frame-sized scratch.
+ *
+ * The in-place spread cuts peak heap on an open CD image by roughly 40%, and
+ * because what it stops allocating is a hunk-sized block per codec it also
+ * leaves the largest free block substantially bigger, which is what decides
+ * whether a later allocation of that size succeeds. It costs a few percent of
+ * decode time.
+ *
+ * So it is off wherever RAM is not the binding constraint, and on under
+ * LOWRAM_TARGET, where it is - the same trade the other LOWRAM_TARGET levers
+ * make. Set it explicitly to override either default.
+ *
+ * See chd_read() in chd.h for what it asks of the caller's buffer. */
+#ifndef CHDR_CD_SCRATCH_BUFFER
+#define CHDR_CD_SCRATCH_BUFFER  (!LOWRAM_TARGET)
+#endif
+
+/* Trade CPU for RAM across several independent levers, for targets with a
+ * few hundred KB of RAM rather than gigabytes:
  *
  * 1. Per-hunk map: instead of fully materializing it at chd_open()
  *    (12 bytes/hunk for CHDv5, ~24 bytes/hunk for legacy v1-v4 - scales
@@ -32,9 +55,6 @@
  *    src/libchdr_chd.c): grown on demand to the largest hunk actually
  *    read instead of preallocated to header.hunkbytes at chd_open().
  */
-#ifndef LOWRAM_TARGET
-#define LOWRAM_TARGET              0
-#endif
 
 #ifndef LOWRAM_TARGET_CHECKPOINT_STRIDE
 #define LOWRAM_TARGET_CHECKPOINT_STRIDE 2048

@@ -231,7 +231,11 @@ chd_error lzma_codec_init(void* codec, uint32_t hunkbytes)
 	LzmaDec_Construct(&lzma_codec->decoder);
 
 	/* do memory allocations */
-	if (LzmaDec_Allocate(&lzma_codec->decoder, decoder_props, LZMA_PROPS_SIZE, &alloc->base) != SZ_OK)
+	/* Probs only, no dictionary: the dictionary is pointed at the caller's
+	 * output buffer per call instead, which is what the SDK's own one-call
+	 * LzmaDecode() does. Saves a hunk-sized allocation and the memcpy that
+	 * LzmaDec_DecodeToBuf would make out of a private dictionary. */
+	if (LzmaDec_AllocateProbs(&lzma_codec->decoder, decoder_props, LZMA_PROPS_SIZE, &alloc->base) != SZ_OK)
 		return CHDERR_DECOMPRESSION_ERROR;
 
 	/* Okay */
@@ -248,7 +252,7 @@ void lzma_codec_free(void* codec)
 	lzma_codec_data* lzma_codec = (lzma_codec_data*) codec;
 
 	/* free memory */
-	LzmaDec_Free(&lzma_codec->decoder, &lzma_codec->allocator.base);
+	LzmaDec_FreeProbs(&lzma_codec->decoder, &lzma_codec->allocator.base);
 	lzma_allocator_free(&lzma_codec->allocator);
 }
 
@@ -265,12 +269,20 @@ chd_error lzma_codec_decompress(void* codec, const uint8_t *src, uint32_t comple
 	SizeT consumedlen, decodedlen;
 	/* initialize */
 	lzma_codec_data* lzma_codec = (lzma_codec_data*) codec;
+
+	/* Decode straight into the caller's buffer by using it as the dictionary.
+	 * Each hunk is an independent stream, so back-references can never reach
+	 * before its start and destlen is a sufficient window. */
+	lzma_codec->decoder.dic = dest;
+	lzma_codec->decoder.dicBufSize = destlen;
 	LzmaDec_Init(&lzma_codec->decoder);
 
 	/* decode */
 	consumedlen = complen;
-	decodedlen = destlen;
-	res = LzmaDec_DecodeToBuf(&lzma_codec->decoder, dest, &decodedlen, src, &consumedlen, LZMA_FINISH_END, &status);
+	res = LzmaDec_DecodeToDic(&lzma_codec->decoder, destlen, src, &consumedlen, LZMA_FINISH_END, &status);
+	decodedlen = lzma_codec->decoder.dicPos;
+	lzma_codec->decoder.dic = NULL;   /* never let LzmaDec_Free touch it */
+	lzma_codec->decoder.dicBufSize = 0;
 	if ((res != SZ_OK && res != LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK) || consumedlen != complen || decodedlen != destlen)
 		return CHDERR_DECOMPRESSION_ERROR;
 	return CHDERR_NONE;

@@ -393,8 +393,8 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd);
  * 0 (the default) disables it entirely and reproduces the historical
  * behaviour exactly. libchdr deliberately does not choose this number
  * itself: how much memory is available is a property of the embedding
- * system - a desktop, an ESP32 with or without PSRAM, an RP2350 - and not
- * something a library can portably discover.
+ * system, anywhere from a desktop to a microcontroller with a few hundred
+ * KB of SRAM, and not something a library can portably discover.
  *
  * Currently spent on a compressed read-ahead window, which collapses the
  * one-seek-plus-one-read-per-hunk access pattern into far fewer, larger
@@ -449,7 +449,25 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 
 /* ----- core data read/write ----- */
 
-/* read one hunk from the CHD file */
+/* Read one hunk from the CHD file.
+ *
+ * When CHDR_CD_SCRATCH_BUFFER is 0, CD images are decoded into `buffer` and
+ * the sectors are then spread out in place, so during the call `buffer` holds
+ * intermediate contents and is read back as well as written. It must be
+ * ordinary readable RAM: an uncached or write-combining region, a write-only
+ * mapping or a hardware FIFO still yields correct output but can be far
+ * slower, and a consumer streaming `buffer` out while the call is in progress
+ * would see intermediate data rather than the finished hunk.
+ *
+ * `buffer` must also be at least 2-byte aligned, because the CD FLAC codec
+ * writes 16-bit samples into it directly. Anything from malloc or an array
+ * already is; an odd pointer returns CHDERR_INVALID_PARAMETER rather than
+ * trapping on a target without unaligned stores.
+ *
+ * CHDR_CD_SCRATCH_BUFFER=1 restores the previous behaviour - the codecs keep
+ * their own hunk-sized scratch and write `buffer` once at the end - which
+ * lifts both requirements at the cost of roughly 37 KB of heap per open CD
+ * image. */
 CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer);
 
 

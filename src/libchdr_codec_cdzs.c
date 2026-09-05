@@ -1,3 +1,4 @@
+#include "../include/libchdr/chdconfig.h"
 #include "codec_cdzs.h"
 
 #include <stddef.h>
@@ -11,8 +12,15 @@ chd_error cdzs_codec_init(void* codec, uint32_t hunkbytes)
 	chd_error ret;
 	cdzs_codec_data* cdzs = (cdzs_codec_data*) codec;
 
-	/* allocate buffer */
+	/* Only the subcode needs a scratch buffer now: the sector data is decoded
+	 * straight into the caller's hunk. That is hunkbytes/25.5 instead of
+	 * hunkbytes - 768 bytes rather than 19584 at CD geometry. */
+#if CHDR_CD_SCRATCH_BUFFER
 	cdzs->buffer = (uint8_t*)malloc(sizeof(uint8_t) * hunkbytes);
+#else
+	/* subcode staging plus one frame of bounce for the in-place spread */
+	cdzs->buffer = (uint8_t*)malloc(sizeof(uint8_t) * ((hunkbytes / CD_FRAME_SIZE) * CD_MAX_SUBCODE_DATA + CD_MAX_SECTOR_DATA));
+#endif
 	if (cdzs->buffer == NULL)
 		return CHDERR_OUT_OF_MEMORY;
 

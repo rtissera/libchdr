@@ -1,6 +1,31 @@
 name: CMake
 
-on: [push, pull_request]
+on:
+  # push only on master: a branch push and its pull request otherwise run
+  # every job twice on the same commit. paths-ignore skips work the change
+  # cannot affect - no job here builds anything
+  # under contrib/, and prose does not change decoded output.
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/**'
+
+# Cancel superseded runs: a force-push otherwise leaves the previous commit's
+# jobs running to completion alongside the new ones. Never cancels master.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   build:

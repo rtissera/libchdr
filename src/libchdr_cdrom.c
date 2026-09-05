@@ -425,9 +425,9 @@ static CHDR_INLINE uint8_t ecc_xtime(uint8_t x)
  *
  * The bytes are assembled from four loads rather than read as a word: the P
  * stride is 86 and 86 % 4 == 2, so consecutive components alternate 4-aligned
- * and 2-aligned no matter how the caller aligned its buffer. Measured on
- * ESP32-P4, doing it this way beats both a lw/lhu split and a padded aligned
- * copy, and it is correct for any alignment.
+ * and 2-aligned no matter how the caller aligned its buffer. On targets
+ * without cheap unaligned word loads this still beats both a split load and a
+ * padded aligned copy, and it is correct for any alignment.
  */
 
 static CHDR_INLINE uint32_t ecc_xtime4(uint32_t t)
@@ -523,7 +523,7 @@ void ecc_clear(uint8_t *sector)
 /* Handles decompression for CDZL, CDLZ, CDZS, and co. */
 
 chd_error cd_codec_decompress(
-	uint8_t *buffer,
+	uint8_t *scratch,
 	void *base_decompressor, chd_codec_interface_decompress base_decompress,
 	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
 	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen)
@@ -558,28 +558,82 @@ chd_error cd_codec_decompress(
 	if (complen < (header_bytes + complen_base))
 		return CHDERR_DECOMPRESSION_ERROR;
 
-	/* reset and decode */
-	decomp_err = base_decompress(base_decompressor, &src[header_bytes], complen_base, &buffer[0], frames * CD_MAX_SECTOR_DATA);
+#if CHDR_CD_SCRATCH_BUFFER
+	/* Private scratch: the caller's buffer is written once, linearly, at the
+	 * end and never read. Costs a hunk-sized allocation per codec. */
+	decomp_err = base_decompress(base_decompressor, &src[header_bytes], complen_base, &scratch[0], frames * CD_MAX_SECTOR_DATA);
 	if (decomp_err != CHDERR_NONE) {
 		return decomp_err;
 	}
 #if WANT_SUBCODE
-	decomp_err = subcode_decompress(subcode_decompressor, &src[header_bytes + complen_base], complen - complen_base - header_bytes, &buffer[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
+	decomp_err = subcode_decompress(subcode_decompressor, &src[header_bytes + complen_base], complen - complen_base - header_bytes, &scratch[frames * CD_MAX_SECTOR_DATA], frames * CD_MAX_SUBCODE_DATA);
+	if (decomp_err != CHDERR_NONE) {
+		return decomp_err;
+	}
+#endif
+
+	for (framenum = 0; framenum < frames; framenum++)
+	{
+#if WANT_RAW_DATA_SECTOR
+		uint8_t *sector;
+#endif
+		memcpy(&dest[framenum * CD_FRAME_SIZE], &scratch[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
+#if WANT_SUBCODE
+		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &scratch[frames * CD_MAX_SECTOR_DATA + framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
+#endif
+#if WANT_RAW_DATA_SECTOR
+		sector = (uint8_t *)&dest[framenum * CD_FRAME_SIZE];
+		if ((src[framenum / 8] & (1 << (framenum % 8))) != 0)
+		{
+			memcpy(sector, s_cd_sync_header, sizeof(s_cd_sync_header));
+			ecc_generate(sector);
+		}
+#endif
+	}
+#else
+	/* Decode the sector data into the caller's hunk, packed at the front, then
+	 * spread it out to the 2448-byte frame stride in place. Needs only a
+	 * frame-sized scratch: 2352 bytes for the sector being moved, plus the
+	 * subcode, which cannot stay in place because spreading the sectors over
+	 * it would overwrite it.
+	 *
+	 * Frames move up by 96 bytes each, so source and destination overlap. Each
+	 * sector is bounced through the scratch rather than memmove()d, because
+	 * memmove on overlapping regions degrades to a byte-at-a-time loop in some
+	 * C libraries; two non-overlapping memcpys are far cheaper there and no
+	 * worse elsewhere.
+	 *
+	 * Frames are moved last to first so a sector never lands on one not yet
+	 * moved: frame N is written at 2448N, and every unmoved source below it
+	 * ends at 2352N or lower. */
+	{
+	uint8_t *bounce = &scratch[frames * CD_MAX_SUBCODE_DATA];
+
+	decomp_err = base_decompress(base_decompressor, &src[header_bytes], complen_base, &dest[0], frames * CD_MAX_SECTOR_DATA);
+	if (decomp_err != CHDERR_NONE) {
+		return decomp_err;
+	}
+#if WANT_SUBCODE
+	decomp_err = subcode_decompress(subcode_decompressor, &src[header_bytes + complen_base], complen - complen_base - header_bytes, &scratch[0], frames * CD_MAX_SUBCODE_DATA);
 	if (decomp_err != CHDERR_NONE) {
 		return decomp_err;
 	}
 #endif
 
 	/* reassemble the data */
-	for (framenum = 0; framenum < frames; framenum++)
+	for (framenum = frames; framenum-- > 0; )
 	{
 #if WANT_RAW_DATA_SECTOR
 		uint8_t *sector;
 #endif
 
-		memcpy(&dest[framenum * CD_FRAME_SIZE], &buffer[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
+		/* frame 0 is already where it belongs */
+		if (framenum != 0) {
+			memcpy(bounce, &dest[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
+			memcpy(&dest[framenum * CD_FRAME_SIZE], bounce, CD_MAX_SECTOR_DATA);
+		}
 #if WANT_SUBCODE
-		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &buffer[frames * CD_MAX_SECTOR_DATA + framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
+		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &scratch[framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
 #endif
 
 #if WANT_RAW_DATA_SECTOR
@@ -592,5 +646,7 @@ chd_error cd_codec_decompress(
 		}
 #endif
 	}
+	}
+#endif
 	return CHDERR_NONE;
 }

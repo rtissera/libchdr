@@ -5,6 +5,12 @@ set -euo pipefail
 
 CORPUS="$(cd "$(dirname "$0")" && pwd)/seeds"
 mkdir -p "$CORPUS"
+# Parent/delta pairs live outside seeds/, because a child CHD cannot be opened
+# without its parent and the workflows that walk seeds/ open every file there
+# standalone (big-endian-correctness.yml, lowram-correctness.yml) - a child
+# dropped in with them would fail every one of those jobs.
+PARENT="$(cd "$(dirname "$0")" && pwd)/parent"
+mkdir -p "$PARENT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -90,3 +96,34 @@ create_raw_boundary raw_boundary.chd -c zstd
 # Summary.
 echo "generated $(ls -1 "$CORPUS"/*.chd 2>/dev/null | wc -l) CHD samples:"
 ls -lhS "$CORPUS"/*.chd 2>/dev/null | awk '{print "  " $5 "  " $NF}' | sed "s|$CORPUS/||"
+
+# ---- parent / delta pair ----------------------------------------------------
+#
+# Nothing in seeds/ has a parent, so COMPRESSION_PARENT is otherwise never
+# decoded by any test. Two children, because they exercise different maps:
+#
+#   delta.chd  identical content to the parent, so every hunk is a parent
+#              reference and nothing is stored - the maximal case.
+#   mixed.chd  a few regions overwritten, so the map holds parent references
+#              and real compressed hunks side by side, which is what a real
+#              delta looks like.
+#
+# tests/parent_decode.c checks both decode to the right bytes.
+
+chdman createcd -f -o "$PARENT/base.chd" -i "$CUE" >/dev/null 2>&1 || true
+
+if [ -f "$PARENT/base.chd" ]; then
+    chdman copy -f -i "$PARENT/base.chd" -o "$PARENT/delta.chd" \
+        -op "$PARENT/base.chd" >/dev/null 2>&1 || true
+
+    # perturb the extracted audio, then re-encode against the same parent
+    if chdman extractcd -f -i "$PARENT/base.chd" -o "$TMP/ext.cue" \
+            -ob "$TMP/ext.bin" >/dev/null 2>&1; then
+        dd if=/dev/urandom of="$TMP/ext.bin" bs=2352 seek=10 count=4 \
+            conv=notrunc status=none
+        dd if=/dev/urandom of="$TMP/ext.bin" bs=2352 seek=50 count=4 \
+            conv=notrunc status=none
+        chdman createcd -f -o "$PARENT/mixed.chd" -i "$TMP/ext.cue" \
+            -op "$PARENT/base.chd" >/dev/null 2>&1 || true
+    fi
+fi

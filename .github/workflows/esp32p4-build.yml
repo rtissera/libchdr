@@ -15,7 +15,32 @@ name: ESP32-P4 build
 # system. No ESP32-P4 hardware in CI either way, so this can't prove
 # chd_open()/chd_read() work at runtime - see smoke_test.c.
 
-on: [push, pull_request]
+on:
+  # push only on master: a branch push and its pull request otherwise run
+  # every job twice on the same commit. paths-ignore skips work the change
+  # cannot affect - the other target's tree is not
+  # built here, and prose does not change decoded output.
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/tangcore-bl616/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/tangcore-bl616/**'
+
+# Cancel superseded runs: a force-push otherwise leaves the previous commit's
+# jobs running to completion alongside the new ones. Never cancels master.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   esp32p4-build:

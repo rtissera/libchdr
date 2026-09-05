@@ -28,6 +28,7 @@
 /* not exposed in a public header, but a global symbol in libchdr_chd.c */
 extern uint16_t chd_crc16(const void *data, uint32_t length);
 
+
 static uint64_t rng_state;
 
 static void rng_seed(uint64_t s)
@@ -57,6 +58,22 @@ static uint64_t fnv(uint64_t h, const void *p, size_t n)
 
 #define FNV_INIT 1469598103934665603ULL
 
+static int check(const char *what, uint64_t got, uint64_t want)
+{
+	if (got == want) {
+		printf("  ok    %-22s %016llx\n", what, (unsigned long long)got);
+		return 0;
+	}
+	printf("  FAIL  %-22s got %016llx want %016llx\n", what,
+	       (unsigned long long)got, (unsigned long long)want);
+	return 1;
+}
+
+/* ecc_generate/verify/clear only exist when raw sectors are built, so the ECC
+ * half of this test does too - cdrom.h declares them behind the same guard.
+ * crc16 is unconditional and still runs either way. */
+#if WANT_RAW_DATA_SECTOR
+
 /* Shape a deterministic sector, cycling through the payload patterns and
  * sector modes that drive the different ECC paths. */
 static void make_sector(uint8_t *s, int i)
@@ -79,17 +96,6 @@ static void make_sector(uint8_t *s, int i)
 		s[18] = (i & 2) ? 0x20 : 0x00;
 		s[22] = s[18];
 	}
-}
-
-static int check(const char *what, uint64_t got, uint64_t want)
-{
-	if (got == want) {
-		printf("  ok    %-22s %016llx\n", what, (unsigned long long)got);
-		return 0;
-	}
-	printf("  FAIL  %-22s got %016llx want %016llx\n", what,
-	       (unsigned long long)got, (unsigned long long)want);
-	return 1;
 }
 
 static int kat_ecc(void)
@@ -127,6 +133,8 @@ static int kat_ecc(void)
 	     + check("ecc_verify",   hver, 0x9ff022cc3241f2c3ULL)
 	     + check("ecc_clear",    hclr, 0xf283e958b1a5eb2dULL);
 }
+
+#endif /* WANT_RAW_DATA_SECTOR */
 
 static int kat_crc16(void)
 {
@@ -174,7 +182,11 @@ int main(void)
 	int fail = 0;
 
 	printf("libchdr known-answer tests\n");
+#if WANT_RAW_DATA_SECTOR
 	fail += kat_ecc();
+#else
+	printf("  skip  ecc (WANT_RAW_DATA_SECTOR=0)\n");
+#endif
 	fail += kat_crc16();
 
 	if (fail) {

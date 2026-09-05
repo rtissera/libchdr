@@ -69,7 +69,7 @@ void ecc_clear(uint8_t *sector);
 #endif
 
 chd_error cd_codec_decompress(
-	uint8_t *buffer,
+	uint8_t *scratch,
 	void *base_decompressor, chd_codec_interface_decompress base_decompress,
 	void *subcode_decompressor, chd_codec_interface_decompress subcode_decompress,
 	const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);

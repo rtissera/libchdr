@@ -27,7 +27,13 @@ chd_error cdfl_codec_init(void *codec, uint32_t hunkbytes)
 	if (hunkbytes % CD_FRAME_SIZE != 0)
 		return CHDERR_CODEC_ERROR;
 
+#if CHDR_CD_SCRATCH_BUFFER
 	cdfl->buffer = (uint8_t*)malloc(sizeof(uint8_t) * hunkbytes);
+#else
+	/* Only the subcode needs staging now - the FLAC samples are decoded
+	 * straight into the caller's hunk. 768 bytes for a CD hunk, not 19584. */
+	cdfl->buffer = (uint8_t*)malloc(sizeof(uint8_t) * ((hunkbytes / CD_FRAME_SIZE) * CD_MAX_SUBCODE_DATA + CD_MAX_SECTOR_DATA));
+#endif
 	if (cdfl->buffer == NULL)
 		return CHDERR_OUT_OF_MEMORY;
 
@@ -77,6 +83,7 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		 * small-RAM target that, not the stream, is what usually fails */
 		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
 	}
+#if CHDR_CD_SCRATCH_BUFFER
 	buffer = &cdfl->buffer[0];
 	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian)) {
 		/* alloc_failed is cleared by the reset() above, so it can only be
@@ -103,6 +110,55 @@ chd_error cdfl_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &cdfl->buffer[frames * CD_MAX_SECTOR_DATA + framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
 #endif
 	}
+#else
+	/* Decode the samples into the caller's hunk, packed at the front, then
+	 * spread them to the 2448-byte frame stride, bouncing each sector through
+	 * a frame-sized buffer so every copy stays a non-overlapping memcpy - see
+	 * cd_codec_decompress() in libchdr_cdrom.c for why not memmove().
+	 *
+	 * dr_flac writes int16_t samples, so dest has to be 2-byte aligned. Any
+	 * buffer from malloc or an array already is; an odd one is refused rather
+	 * than trapping on a target without unaligned stores. CD_FRAME_SIZE and
+	 * CD_MAX_SECTOR_DATA are both even, so alignment holds for every frame
+	 * once it holds for dest. */
+	if (((uintptr_t)dest & 1) != 0)
+		return CHDERR_INVALID_PARAMETER;
+	buffer = &dest[0];
+	if (!flac_decoder_decode_interleaved(&cdfl->decoder, (int16_t *)(buffer), frames * CD_MAX_SECTOR_DATA/4, cdfl->swap_endian)) {
+		/* alloc_failed is cleared by the reset() above, so it can only be
+		 * set here by an allocation the decode itself attempted */
+		return cdfl->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
+	}
+
+#if WANT_SUBCODE
+	/* inflate the subcode data */
+	offset = flac_decoder_finish(&cdfl->decoder);
+	ret = zlib_codec_decompress(&cdfl->subcode_decompressor, src + offset, complen - offset, &cdfl->buffer[0], frames * CD_MAX_SUBCODE_DATA);
+	if (ret != CHDERR_NONE) {
+		return ret;
+	}
+#else
+	flac_decoder_finish(&cdfl->decoder);
+#endif
+
+	/* reassemble the data, last frame first so a sector never lands on one
+	 * not yet moved */
+	{
+	uint8_t *bounce = &cdfl->buffer[frames * CD_MAX_SUBCODE_DATA];
+
+	for (framenum = frames; framenum-- > 0; )
+	{
+		/* frame 0 is already where it belongs */
+		if (framenum != 0) {
+			memcpy(bounce, &dest[framenum * CD_MAX_SECTOR_DATA], CD_MAX_SECTOR_DATA);
+			memcpy(&dest[framenum * CD_FRAME_SIZE], bounce, CD_MAX_SECTOR_DATA);
+		}
+#if WANT_SUBCODE
+		memcpy(&dest[framenum * CD_FRAME_SIZE + CD_MAX_SECTOR_DATA], &cdfl->buffer[framenum * CD_MAX_SUBCODE_DATA], CD_MAX_SUBCODE_DATA);
+#endif
+	}
+	}
+#endif
 
 	return CHDERR_NONE;
 }

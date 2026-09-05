@@ -24,7 +24,18 @@ name: RP2350 (Arm) RAM budget
 # Built with -Os -flto and CHDR_LOWRAM_TARGET=ON, same rationale as
 # rv32-ram-budget.yml.
 
-on: [push, pull_request]
+on:
+  # push only on master - a branch push and its pull_request otherwise run
+  # every job twice on the same commit
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs: a force-push otherwise leaves the previous commit's
+# jobs running to completion alongside the new ones. Never cancels master.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   rp2350-arm-ram-budget:

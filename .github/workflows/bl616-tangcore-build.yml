@@ -16,7 +16,18 @@ name: BL616 TangCore build
 # in contrib/tangcore-bl616/README.md together when picking up upstream
 # changes is wanted.
 
-on: [push, pull_request]
+on:
+  # push only on master - a branch push and its pull_request otherwise run
+  # every job twice on the same commit
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs: a force-push otherwise leaves the previous commit's
+# jobs running to completion alongside the new ones. Never cancels master.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0

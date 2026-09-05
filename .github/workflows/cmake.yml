@@ -30,6 +30,10 @@ concurrency:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    # Cap a wedged runner. The slowest legitimate job here finishes well
+    # inside this; without it a VM that fails to boot runs to GitHub's
+    # six-hour maximum, which has happened.
+    timeout-minutes: 15
     strategy:
       matrix:
         os: [macos-latest, ubuntu-26.04-arm, ubuntu-latest, windows-latest]

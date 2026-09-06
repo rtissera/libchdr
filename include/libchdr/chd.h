@@ -451,23 +451,25 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 
 /* Read one hunk from the CHD file.
  *
- * When CHDR_CD_SCRATCH_BUFFER is 0, CD images are decoded into `buffer` and
- * the sectors are then spread out in place, so during the call `buffer` holds
- * intermediate contents and is read back as well as written. It must be
- * ordinary readable RAM: an uncached or write-combining region, a write-only
- * mapping or a hardware FIFO still yields correct output but can be far
- * slower, and a consumer streaming `buffer` out while the call is in progress
- * would see intermediate data rather than the finished hunk.
+ * `buffer` must be ordinary readable RAM, not just writable: several codecs
+ * work through it rather than only filling it at the end. LZMA uses it as its
+ * dictionary window, so every back-reference reads bytes it wrote earlier in
+ * the same call; and with CHDR_CD_SCRATCH_BUFFER=0 a CD hunk is decoded into
+ * it packed and then spread out to the frame stride in place. An uncached or
+ * write-combining region, a write-only mapping or a hardware FIFO still
+ * yields correct output but can be far slower, and a consumer streaming
+ * `buffer` out while the call is in progress would see intermediate data
+ * rather than the finished hunk.
  *
- * `buffer` must also be at least 2-byte aligned, because the CD FLAC codec
- * writes 16-bit samples into it directly. Anything from malloc or an array
- * already is; an odd pointer returns CHDERR_INVALID_PARAMETER rather than
- * trapping on a target without unaligned stores.
+ * `buffer` must also be at least 2-byte aligned: the FLAC codecs write 16-bit
+ * samples into it directly. Anything from malloc or an array already is. In
+ * the CD case an odd pointer is refused with CHDERR_INVALID_PARAMETER rather
+ * than trapping on a target without unaligned stores.
  *
- * CHDR_CD_SCRATCH_BUFFER=1 restores the previous behaviour - the codecs keep
- * their own hunk-sized scratch and write `buffer` once at the end - which
- * lifts both requirements at the cost of roughly 37 KB of heap per open CD
- * image. */
+ * CHDR_CD_SCRATCH_BUFFER=1 keeps a hunk-sized scratch per CD codec and writes
+ * `buffer` once at the end, which lifts the read-back requirement for CD
+ * images at the cost of roughly 37 KB of heap per open image. It does not
+ * change the LZMA or FLAC cases above, which apply to every build. */
 CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer);
 
 

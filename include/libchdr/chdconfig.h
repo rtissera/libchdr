@@ -33,6 +33,13 @@
  * LOWRAM_TARGET, where it is - the same trade the other LOWRAM_TARGET levers
  * make. Set it explicitly to override either default.
  *
+ * Decoded sector data is identical either way. The one observable difference
+ * is with WANT_SUBCODE 0, where neither setting writes the 96-byte subcode
+ * area of each frame and so leaves it holding unrelated bytes: the caller's
+ * previous buffer contents with a private scratch, remnants of the packed
+ * decode without one. Those bytes have never been meaningful in that
+ * configuration; do not read them.
+ *
  * See chd_read() in chd.h for what it asks of the caller's buffer. */
 #ifndef CHDR_CD_SCRATCH_BUFFER
 #define CHDR_CD_SCRATCH_BUFFER  (!LOWRAM_TARGET)

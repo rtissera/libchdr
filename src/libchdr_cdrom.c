@@ -20,6 +20,12 @@
 
 #include "../include/libchdr/cdrom.h"
 
+/* Undefined, this evaluates to 0 below and silently selects the in-place
+ * path, which sizes the codec scratch differently. Fail loudly instead. */
+#ifndef CHDR_CD_SCRATCH_BUFFER
+#error "chdconfig.h must be included before this file"
+#endif
+
 #if WANT_RAW_DATA_SECTOR
 
 /***************************************************************************

@@ -14,6 +14,19 @@ option(CHDR_VERIFY_BLOCK_CRC "Verify integrity of decoded data" ON)
 option(CHDR_LOWRAM_TARGET "Trade CPU for RAM on the per-hunk map (checkpointed on-demand decode instead of fully materializing it at chd_open) - for memory-constrained targets" OFF)
 option(CHDR_WANT_TESTS "Build tests for the library" ON)
 
+
+# CD codecs normally decode into the caller's hunk and spread the sectors in
+# place, which reads that buffer back and costs CPU, but needs only a
+# frame-sized scratch instead of a hunk-sized one per codec.
+#
+# Left unset it follows CHDR_LOWRAM_TARGET: private scratch off small-RAM
+# targets (the caller's buffer is not read back, and the extra ~37 KB per open
+# CD image is affordable), in-place spread on them. Set it to ON or OFF to
+# pin it either way - ON is also what a caller wants whose hunk buffer is
+# uncached, write-combining or a FIFO, since the buffer is then written once,
+# linearly, and never read.
+set(CHDR_CD_SCRATCH_BUFFER "" CACHE STRING "Decode CD sectors via a private scratch buffer (ON/OFF; default follows CHDR_LOWRAM_TARGET)")
+
 option(BUILD_LTO "Compile libchdr with link-time optimization if supported" OFF)
 if(BUILD_LTO)
   include(CheckIPOSupported)
@@ -93,6 +106,17 @@ else()
   list(APPEND CHDR_DEFINES WANT_SUBCODE=0)
 endif()
 
+# Only pass it through when the user actually set it; otherwise chdconfig.h's
+# own default (follow LOWRAM_TARGET) applies. Defining it unconditionally here
+# would silently override that.
+if(NOT CHDR_CD_SCRATCH_BUFFER STREQUAL "")
+  if(CHDR_CD_SCRATCH_BUFFER)
+    list(APPEND CHDR_DEFINES CHDR_CD_SCRATCH_BUFFER=1)
+  else()
+    list(APPEND CHDR_DEFINES CHDR_CD_SCRATCH_BUFFER=0)
+  endif()
+endif()
+
 if(CHDR_VERIFY_BLOCK_CRC)
   # The per-hunk CRC chdman stores covers the fully reconstituted hunk, ECC and
   # sync header included, so a build that skips ecc_generate() cannot match it.
@@ -159,6 +183,15 @@ target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 if(CHDR_NEEDS_MINIZ_RENAME)
   libchdr_apply_esp_rom_miniz_workaround(chdr-static)
 endif()
+# PRIVATE, deliberately. These macros are read by the installed headers as well
+# as by the sources, so anything compiled against those headers has to agree
+# with how the library was built - but pushing them onto consumers with PUBLIC
+# injects unnamespaced names (WANT_SUBCODE, VERIFY_BLOCK_CRC, LOWRAM_TARGET)
+# into every downstream compile, where they can collide. The tests in this tree
+# are the only thing here that needs them, and tests/CMakeLists.txt gives them
+# to those targets directly. The general fix is a generated header recording
+# what the library was actually built with; until then a consumer that changes
+# a default must define it on their own compile too.
 target_compile_definitions(chdr-static PRIVATE ${CHDR_DEFINES})
 
 if(MSVC)

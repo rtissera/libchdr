@@ -393,8 +393,8 @@ CHD_EXPORT chd_error chd_precache(chd_file *chd);
  * 0 (the default) disables it entirely and reproduces the historical
  * behaviour exactly. libchdr deliberately does not choose this number
  * itself: how much memory is available is a property of the embedding
- * system - a desktop, an ESP32 with or without PSRAM, an RP2350 - and not
- * something a library can portably discover.
+ * system, anywhere from a desktop to a microcontroller with a few hundred
+ * KB of SRAM, and not something a library can portably discover.
  *
  * Currently spent on a compressed read-ahead window, which collapses the
  * one-seek-plus-one-read-per-hunk access pattern into far fewer, larger
@@ -449,7 +449,27 @@ CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 
 /* ----- core data read/write ----- */
 
-/* read one hunk from the CHD file */
+/* Read one hunk from the CHD file.
+ *
+ * `buffer` must be ordinary readable RAM, not just writable: several codecs
+ * work through it rather than only filling it at the end. LZMA uses it as its
+ * dictionary window, so every back-reference reads bytes it wrote earlier in
+ * the same call; and with CHDR_CD_SCRATCH_BUFFER=0 a CD hunk is decoded into
+ * it packed and then spread out to the frame stride in place. An uncached or
+ * write-combining region, a write-only mapping or a hardware FIFO still
+ * yields correct output but can be far slower, and a consumer streaming
+ * `buffer` out while the call is in progress would see intermediate data
+ * rather than the finished hunk.
+ *
+ * `buffer` must also be at least 2-byte aligned: the FLAC codecs write 16-bit
+ * samples into it directly. Anything from malloc or an array already is. In
+ * the CD case an odd pointer is refused with CHDERR_INVALID_PARAMETER rather
+ * than trapping on a target without unaligned stores.
+ *
+ * CHDR_CD_SCRATCH_BUFFER=1 keeps a hunk-sized scratch per CD codec and writes
+ * `buffer` once at the end, which lifts the read-back requirement for CD
+ * images at the cost of roughly 37 KB of heap per open image. It does not
+ * change the LZMA or FLAC cases above, which apply to every build. */
 CHD_EXPORT chd_error chd_read(chd_file *chd, uint32_t hunknum, void *buffer);
 
 

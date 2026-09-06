@@ -42,9 +42,32 @@ endif()
 # (+15,980 bytes per LZMA instance at CHD's lc=3/lp=0). Off by default.
 option(CHDR_LZMA_PROB32 "Use 32-bit LZMA probability model" OFF)
 
+# FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND option. dr_flac is
+# the default; microflac needs CHDR_MICROFLAC_SOURCE_DIR pointing at a checkout.
+if(NOT DEFINED CHDR_FLAC_BACKEND)
+	set(CHDR_FLAC_BACKEND drflac)
+endif()
+if(CHDR_FLAC_BACKEND STREQUAL "microflac")
+	enable_language(CXX)
+	if(NOT CHDR_MICROFLAC_SOURCE_DIR)
+		message(FATAL_ERROR "CHDR_FLAC_BACKEND=microflac needs CHDR_MICROFLAC_SOURCE_DIR")
+	endif()
+	set(CHDR_FLAC_SRC
+		${LIBCHDR_ROOT}/src/libchdr_flac_microflac.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/flac_decoder.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/decorrelation.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/frame_header.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/pcm_packing.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/crc.cpp
+		${CHDR_MICROFLAC_SOURCE_DIR}/src/lpc.cpp)
+else()
+	set(CHDR_FLAC_SRC ${LIBCHDR_ROOT}/src/libchdr_flac.c)
+endif()
+
 add_executable(rp2350-bench
 	benchmark_main.c
 	hw_config.c
+	${CHDR_FLAC_SRC}
 	${LIBCHDR_ROOT}/src/libchdr_bitstream.c
 	${LIBCHDR_ROOT}/src/libchdr_cdrom.c
 	${LIBCHDR_ROOT}/src/libchdr_chd.c
@@ -58,7 +81,6 @@ add_executable(rp2350-bench
 	${LIBCHDR_ROOT}/src/libchdr_codec_lzma.c
 	${LIBCHDR_ROOT}/src/libchdr_codec_zlib.c
 	${LIBCHDR_ROOT}/src/libchdr_codec_zstd.c
-	${LIBCHDR_ROOT}/src/libchdr_flac.c
 	${LIBCHDR_ROOT}/src/libchdr_huffman.c
 	${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c
 	${LIBCHDR_ROOT}/deps/miniz-3.1.2/miniz.c
@@ -67,8 +89,23 @@ add_executable(rp2350-bench
 
 target_include_directories(rp2350-bench PRIVATE
 	${LIBCHDR_ROOT}/include
+	${LIBCHDR_ROOT}/src
 	${CMAKE_CURRENT_LIST_DIR}
 )
+if(CHDR_FLAC_BACKEND STREQUAL "microflac")
+	# Only micro-flac's public include dir goes on the target path. Its src/
+	# dir must NOT: it holds a crc.h that shadows the SD driver's own, and a C
+	# translation unit then pulls in a C++ header. micro-flac's sources find
+	# their private headers relative to themselves.
+	target_include_directories(rp2350-bench PRIVATE
+		${CHDR_MICROFLAC_SOURCE_DIR}/include)
+	target_compile_definitions(rp2350-bench PRIVATE
+		CHDR_FLAC_BACKEND_MICROFLAC MICRO_FLAC_DISABLE_OGG)
+	target_compile_options(rp2350-bench PRIVATE
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>)
+endif()
 
 target_compile_definitions(rp2350-bench PRIVATE
 	WANT_RAW_DATA_SECTOR=1

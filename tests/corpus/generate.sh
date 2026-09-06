@@ -76,6 +76,10 @@ create_hd hd_lzma.chd       -c lzma
 create_hd hd_huff.chd       -c huff
 create_hd hd_zstd.chd       -c zstd
 create_hd hd_multi.chd      -c zlib,lzma,huff,zstd
+# The raw FLAC codec, on its own. hd_default happens to include flac hunks
+# because that is one of chdman's default hard-disk codecs, but relying on a
+# default to cover a codec is how a codec stops being covered.
+create_hd hd_flac.chd       -c flac
 
 # CD-ROM: default + per-codec.
 create_cd cd_default.chd

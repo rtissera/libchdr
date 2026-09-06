@@ -1,0 +1,107 @@
+name: micro-flac backend
+
+# Builds CHDR_FLAC_BACKEND=microflac and diffs its decoded output against the
+# dr_flac backend byte-for-byte, in both settings of CHDR_CD_SCRATCH_BUFFER.
+#
+# This exists because the backend is opt-in, C++, and fetched at build time
+# from a pinned commit rather than vendored - so nothing else in this repo
+# compiles it, and it would rot silently. It also compiles against micro-flac's
+# internals, which is why the fetch pins a SHA: an upstream change to its
+# decode() contract has to fail here rather than in someone's firmware.
+#
+# The comparison is the point, not the build. micro-flac synthesises a smaller
+# STREAMINFO block-size field than the dr_flac backend does, and unlike dr_flac
+# it rejects any frame larger than that field - so this is the check that the
+# narrower value still accepts everything chdman writes.
+#
+# It covers two of the three geometries that reach the FLAC decoder:
+# cd_cdfl.chd (CD, 2 channels) and hd_flac.chd (the raw flac codec, 2 channels,
+# hunk size not a multiple of the block so the last frame is short). AVHuff's
+# audio streams also go through this decoder and are NOT covered here - that
+# corpus is fetched, not generated, so wiring it in is its own change.
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'contrib/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  # micro-flac commit the backend is compiled against. Bump deliberately.
+  MICROFLAC_SHA: ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee
+
+jobs:
+  microflac-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install chdman
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mame-tools
+
+      - name: Generate corpus seeds
+        run: tests/corpus/generate.sh
+
+      - name: Build both backends, both scratch settings
+        run: |
+          set -euo pipefail
+          for s in 0 1; do
+            cmake -B "build-drflac-$s" -DCMAKE_BUILD_TYPE=Release \
+              -DCHDR_CD_SCRATCH_BUFFER=$s
+            cmake --build "build-drflac-$s" --target chd_dump_order -j$(nproc)
+
+            cmake -B "build-microflac-$s" -DCMAKE_BUILD_TYPE=Release \
+              -DCHDR_CD_SCRATCH_BUFFER=$s \
+              -DCHDR_FLAC_BACKEND=microflac \
+              -DCHDR_MICROFLAC_GIT_TAG="$MICROFLAC_SHA"
+            cmake --build "build-microflac-$s" --target chd_dump_order -j$(nproc)
+          done
+
+      - name: Byte-identical decode against dr_flac
+        run: |
+          set -euo pipefail
+          fail=0
+          total=0
+          for s in 0 1; do
+            D="build-drflac-$s/tests/chd_dump_order"
+            M="build-microflac-$s/tests/chd_dump_order"
+            for f in tests/corpus/seeds/*.chd; do
+              for order in sequential reverse random:42; do
+                total=$((total+1))
+                "$D" "$f" "$order" > /tmp/d.bin
+                "$M" "$f" "$order" > /tmp/m.bin
+                if ! cmp -s /tmp/d.bin /tmp/m.bin; then
+                  echo "MISMATCH: $(basename "$f") $order CHDR_CD_SCRATCH_BUFFER=$s"
+                  fail=$((fail+1))
+                fi
+              done
+            done
+          done
+          echo "$total checks, $fail mismatches"
+          [ "$fail" -eq 0 ]
+
+      - name: A default build still needs no C++ compiler
+        run: |
+          set -euo pipefail
+          # enable_language(CXX) must stay inside the microflac branch, or the
+          # opt-in backend stops being opt-in for anyone without a C++ toolchain.
+          cmake -B build-nocxx -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=/nonexistent-cxx
+          cmake --build build-nocxx --target chd_dump_order -j$(nproc)

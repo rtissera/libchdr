@@ -20,6 +20,42 @@ endif()
 
 set(LIBCHDR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 
+# FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND. dr_flac is the
+# default. microflac is measurably faster here - 1.46x on the S3 and 1.41x on
+# the P4 decoding CD audio - but it is C++ and Apache-2.0, so it is not
+# vendored: point CHDR_MICROFLAC_SOURCE_DIR at a checkout, or add
+# esphome/micro-flac to the project's idf_component.yml and point this at
+# ${CMAKE_BINARY_DIR}/../managed_components/esphome__micro-flac.
+if(NOT DEFINED CHDR_FLAC_BACKEND)
+	set(CHDR_FLAC_BACKEND drflac)
+endif()
+if(CHDR_FLAC_BACKEND STREQUAL "microflac")
+	if(NOT CHDR_MICROFLAC_SOURCE_DIR)
+		message(FATAL_ERROR "CHDR_FLAC_BACKEND=microflac needs CHDR_MICROFLAC_SOURCE_DIR")
+	endif()
+	# micro-flac enables its Xtensa LPC assembly whenever the core has the
+	# required features, so the .S files must be compiled in on esp32/esp32s3
+	# or the link fails on restore_lpc_*_asm. Worth ~1.064x on its own; the
+	# RISC-V parts take the C path and need nothing extra.
+	set(CHDR_MICROFLAC_ASM "")
+	if(IDF_TARGET STREQUAL "esp32" OR IDF_TARGET STREQUAL "esp32s3")
+		set(CHDR_MICROFLAC_ASM
+			"${CHDR_MICROFLAC_SOURCE_DIR}/src/xtensa/lpc_32_xtensa.S"
+			"${CHDR_MICROFLAC_SOURCE_DIR}/src/xtensa/lpc_64_xtensa.S")
+	endif()
+	set(CHDR_FLAC_SRCS
+		"${LIBCHDR_ROOT}/src/libchdr_flac_microflac.cpp"
+		${CHDR_MICROFLAC_ASM}
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/flac_decoder.cpp"
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/decorrelation.cpp"
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/frame_header.cpp"
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/pcm_packing.cpp"
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/crc.cpp"
+		"${CHDR_MICROFLAC_SOURCE_DIR}/src/lpc.cpp")
+else()
+	set(CHDR_FLAC_SRCS "${LIBCHDR_ROOT}/src/libchdr_flac.c")
+endif()
+
 idf_component_register(
 	SRCS
 		"${LIBCHDR_ROOT}/src/libchdr_bitstream.c"
@@ -35,7 +71,7 @@ idf_component_register(
 		"${LIBCHDR_ROOT}/src/libchdr_codec_lzma.c"
 		"${LIBCHDR_ROOT}/src/libchdr_codec_zlib.c"
 		"${LIBCHDR_ROOT}/src/libchdr_codec_zstd.c"
-		"${LIBCHDR_ROOT}/src/libchdr_flac.c"
+		${CHDR_FLAC_SRCS}
 		"${LIBCHDR_ROOT}/src/libchdr_huffman.c"
 		"${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c"
 		"${LIBCHDR_ROOT}/deps/miniz-3.1.2/miniz.c"
@@ -43,6 +79,21 @@ idf_component_register(
 	INCLUDE_DIRS
 		"${LIBCHDR_ROOT}/include"
 )
+
+if(CHDR_FLAC_BACKEND STREQUAL "microflac")
+	# Only micro-flac's public include dir: its src/ holds a crc.h that will
+	# shadow a consumer's own header of that name. Its sources reach their
+	# private headers relative to themselves.
+	target_include_directories(${COMPONENT_LIB} PRIVATE
+		"${CHDR_MICROFLAC_SOURCE_DIR}/include")
+	target_compile_definitions(${COMPONENT_LIB} PRIVATE
+		CHDR_FLAC_BACKEND_MICROFLAC MICRO_FLAC_DISABLE_OGG)
+	# Keeps libstdc++'s exception, RTTI and guard machinery out of the image.
+	target_compile_options(${COMPONENT_LIB} PRIVATE
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+		$<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>)
+endif()
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
 	WANT_RAW_DATA_SECTOR=1

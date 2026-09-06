@@ -697,3 +697,70 @@ files that completed, the private-scratch build is ~1.5% faster (disc A (GD-ROM,
 against 231615 ms, disc M (GD-ROM, cdlz 88.6%) 329771 against 334669). That is the frame-bounce
 memcpy. The trade is 1.5% of CPU for the headroom that makes an 11% lever
 usable - and without it, that lever cannot be switched on at all.
+
+## Overlapping the card with decode on the second core: a net loss
+
+Every measurement above leaves the CPU idle while the card is read and the card
+idle while the hunk is decoded, on a part with two cores - 0.5-2.1 ms of a
+4.0-4.5 ms hunk. `BENCH_PREFETCH=1` wrapped the SD `core_file` in two windows
+filled by a reader task pinned to the other core: a small one for the v5 map
+entries LOWRAM_TARGET reads per hunk, and a double-buffered large one for the
+compressed payload, predicted to start where the previous block ended. No
+libchdr change was needed - `core_file_callbacks` is enough.
+
+It works, and it is still 1.15x **slower** across the A/B set:
+
+| file | no prefetch | prefetch | | map-window hit |
+|---|---|---|---|---|
+| disc A | 273232 ms | 264554 ms | 0.968x | 95.6% |
+| disc M | 370995 ms | 360792 ms | 0.972x | 94.9% |
+| disc B | 192567 ms | 285609 ms | **1.483x** | 43.8% |
+| disc C | 165002 ms | 200079 ms | **1.213x** | 15.8% |
+| image N | 62805 ms | 117390 ms | **1.869x** | 28.3% |
+| **total** | **1069144 ms** | **1232948 ms** | **1.153x** | |
+
+The overlap is real where it applies: on disc A the wrapper collapsed 63974 card
+reads into 4822, the payload window hit 97.0%, and the run came out 3.3% ahead.
+The payload window is not the problem anywhere - it hits 94-99.5% on every file,
+because compressed blocks really are laid out in hunk order.
+
+**The map window is what loses, and its hit rate predicts the outcome exactly.**
+LOWRAM_TARGET reads a 12-byte v5 map entry from the file per hunk, and a
+COMPRESSION_SELF hunk recurses into its target's entry, which is far away - so
+on a self-reference-heavy image the map is not walked sequentially at all. Every
+miss then reads 4096 bytes where FatFs would have charged one 512-byte sector.
+disc A and disc M walk their maps ~95% sequentially and win; the other three
+miss 56-84% of the time and lose in proportion.
+
+It also costs 45 KB of windows, which took disc A's smallest largest-free-block
+from 39 KB down to 15 KB - giving back more than the in-place spread won, and
+15 KB is close to where allocations start failing on this board.
+
+Both fixes the data pointed at were implemented and measured. Two map windows
+with LRU (a self-referencing hunk alternates between exactly two map regions)
+plus a one-sector map window brought it from 1.153x slower to 1.036x slower.
+Still slower.
+
+**The read-ahead budget settled it.** Measured against the configuration that
+ships - `chd_set_cache_budget(32768)` on - the wrapper is slower on every file:
+
+| file | budget only | budget + prefetch | |
+|---|---|---|---|
+| disc M | 334669 ms | 340793 ms | 1.018x |
+| disc B | 183123 ms | 185690 ms | 1.014x |
+| disc C | 150498 ms | 151542 ms | 1.007x |
+| image N | 59760 ms | 62442 ms | 1.045x |
+| **total** | **728049 ms** | **740467 ms** | **1.017x** |
+
+The reason is visible in its own counters: with the budget on, the payload
+window's hit rate collapses to 0-71% with thousands of oversize fallbacks per
+file, because libchdr's own read-ahead has already coalesced the reads into
+larger ones the window cannot hold. The two are the same idea, and the one
+inside the library does it better: 32 KB against 45 KB, no second core, no task,
+no core_file wrapper, and 1.11x faster instead of 1.017x slower.
+
+**Killed.** `BENCH_PREFETCH` has been removed from the benchmark. Overlapping
+storage with decode on the second core is not a lever on this hardware: what
+looked like idle I/O time was already being hidden by a read-ahead that costs a
+third less RAM. If anyone revisits this, the thing to beat is the budget, not
+the serial baseline.

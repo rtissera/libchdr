@@ -79,3 +79,11 @@ set_source_files_properties(
 include("${LIBCHDR_ROOT}/cmake/EspRomMinizWorkaround.cmake")
 libchdr_apply_esp_rom_miniz_workaround(${COMPONENT_LIB})
 
+# Passed through from idf.py -D so the configuration can be A/B'd without
+# editing this file. Tested with DEFINED, not for truth: 0 is a meaningful
+# value. CHDR_CD_SCRATCH_BUFFER=1 restores the per-codec hunk-sized scratch
+# buffer that LOWRAM_TARGET=1 otherwise turns off - about 16.5 KB per CD
+# codec, at no measured CPU cost either way.
+if(DEFINED CHDR_CD_SCRATCH_BUFFER)
+	target_compile_definitions(${COMPONENT_LIB} PRIVATE CHDR_CD_SCRATCH_BUFFER=${CHDR_CD_SCRATCH_BUFFER})
+endif()

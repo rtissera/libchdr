@@ -144,13 +144,15 @@ static uint64_t sdfile_fsize(void *argp)
  * only path from the decoder to the card, so accounting here splits a hunk's
  * wall time into "waiting on SD" and "everything else" (decode + CRC + map)
  * exactly, with no guesswork and no instrumentation inside the library. */
-static struct {
+typedef struct {
 	uint64_t read_us, seek_us;
 	uint64_t read_bytes;
 	uint64_t reads, seeks, seeks_elided;
 	int64_t  pos;          /* our idea of the current file offset */
 	int      pos_valid;
-} g_io;
+} io_stats;
+
+static io_stats g_io;
 
 static void io_reset(void) { memset(&g_io, 0, sizeof(g_io)); }
 
@@ -422,6 +424,12 @@ static uint32_t g_max_hunks = 0;
 #define BENCH_QUICK 0
 #endif
 
+/* Both of these are value-tested, not defined()-tested, precisely because
+ * they default to 0 here - so -Wundef stays quiet and "= 0" still means off. */
+#ifndef BENCH_AB
+#define BENCH_AB 0
+#endif
+
 
 /* ---- filesystem geometry / fragmentation ----
  *
@@ -468,6 +476,19 @@ static const char *const g_sd_sample[] = {
 	"/sdcard/roms/mame/kinst2/kinst2.chd",
 	"/sdcard/roms/segacd/Shadowrun (J).chd",
 	"/sdcard/roms/pcenginecd/Bonk III - Bonk's Big Adventure (USA).chd",
+};
+#elif BENCH_AB
+/* A/B set: everything that moves under a codegen, clock or buffering change,
+ * and nothing that does not. Two GD-ROMs, which decode fastest per byte and so
+ * show a per-hunk CPU change first; two cdfl-dominated discs, slow enough to
+ * hide one; and a non-CD image as control. ~17 minutes for the set, against
+ * ~2 hours for all fourteen. */
+static const char *const g_sd_sample[] = {
+	"/sdcard/roms/dreamcast/Ikaruga (Japan).chd",
+	"/sdcard/roms/naomi/vathlete/gds-0019.chd",
+	"/sdcard/roms/pcenginecd/Insanity (USA) (Unl).cue.chd",
+	"/sdcard/roms/segacd/Sensible Soccer (E) (Demo).chd",
+	"/sdcard/roms/mame/simpbowl/simpbowl.chd",
 };
 #elif defined(BENCH_ONE_FILE)
 /* single-file bisect mode, for chasing a hang down to one configuration */

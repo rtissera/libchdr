@@ -28,10 +28,12 @@
 # looks exactly like corrupt input or a silicon/codegen bug.
 #
 # Renaming the colliding symbols keeps miniz.c's own definitions reachable.
-# Only miniz.c references these names, so applying the defines to whatever
-# target compiles miniz.c is sufficient. mz_free matters independently of the
-# decoder mismatch: bound to ROM it would hand ESP-IDF-heap pointers to the
-# ROM allocator. mz_adler32 is benign but renamed for consistency.
+# Apply the defines to every target that compiles a translation unit naming
+# them - miniz.c itself, and libchdr's own sources, which call mz_crc32.
+# mz_free matters independently of the decoder mismatch: bound to ROM it would
+# hand ESP-IDF-heap pointers to the ROM allocator. mz_adler32 and mz_crc32 are
+# benign - pure functions over a caller buffer, with no shared struct to
+# disagree about - but renamed so the whole group stays consistent.
 #
 # Deliberately NOT patched into deps/miniz-3.1.2/miniz.h - that tree is
 # vendored verbatim so it can be re-synced from upstream, and a local edit
@@ -56,6 +58,7 @@ set(LIBCHDR_ESP_ROM_MINIZ_COLLISIONS
   tinfl_decompress_mem_to_mem
   tinfl_decompress_mem_to_callback
   mz_adler32
+  mz_crc32
   mz_free
 )
 

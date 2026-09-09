@@ -1040,6 +1040,22 @@ uint16_t chd_crc16(const void *data, uint32_t length)
 	return crc16_update(0xffff, data, length);
 }
 
+#if VERIFY_BLOCK_CRC
+/*-------------------------------------------------
+    chd_crc32 - calculate CRC32 of a decoded
+    v1-v4 hunk
+-------------------------------------------------*/
+
+static uint32_t chd_crc32(const void *data, uint32_t length)
+{
+#ifdef CHDR_SYSTEM_ZLIB
+	return (uint32_t)crc32(0, (const Bytef *)data, length);
+#else
+	return (uint32_t)mz_crc32(MZ_CRC32_INIT, (const mz_uint8 *)data, length);
+#endif
+}
+#endif
+
 /*-------------------------------------------------
 	compressed - test if CHD file is compressed
 +-------------------------------------------------*/
@@ -3096,7 +3112,15 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 		uint32_t bytes;
 		uint8_t* compressed_bytes;
 
-		/* switch off the entry type */
+		/* v3/v4 map entries carry a CRC32 of the decoded hunk plus a flag to
+		 * opt out of it; v1/v2 entries have no room for one and map_extract_old()
+		 * sets that flag for them. Checking it is the legacy counterpart of the
+		 * CRC16 check the v5 path does below - without it a hunk that decodes
+		 * cleanly to the wrong bytes is handed back as valid data. Self- and
+		 * parent-referenced entries are covered when the hunk they point at is
+		 * read.
+		 *
+		 * switch off the entry type */
 		switch (entry->flags & MAP_ENTRY_FLAG_TYPE_MASK)
 		{
 			/* compressed data */
@@ -3118,6 +3142,11 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 					err = chd->codecintf[0]->decompress(codec, compressed_bytes, entry->length, dest, chd->header.hunkbytes);
 				if (err != CHDERR_NONE)
 					return err;
+#if VERIFY_BLOCK_CRC
+				if (!(entry->flags & MAP_ENTRY_FLAG_NO_CRC) &&
+					chd_crc32(dest, chd->header.hunkbytes) != entry->crc)
+					return CHDERR_DECOMPRESSION_ERROR;
+#endif
 				break;
 			}
 
@@ -3126,6 +3155,11 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				err = hunk_read_uncompressed(chd, entry->offset, chd->header.hunkbytes, dest);
 				if (err != CHDERR_NONE)
 					return err;
+#if VERIFY_BLOCK_CRC
+				if (!(entry->flags & MAP_ENTRY_FLAG_NO_CRC) &&
+					chd_crc32(dest, chd->header.hunkbytes) != entry->crc)
+					return CHDERR_DECOMPRESSION_ERROR;
+#endif
 				break;
 
 			/* mini-compressed data */
@@ -3133,6 +3167,11 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				put_bigendian_uint64_t(&dest[0], entry->offset);
 				for (bytes = 8; bytes < chd->header.hunkbytes; bytes++)
 					dest[bytes] = dest[bytes - 8];
+#if VERIFY_BLOCK_CRC
+				if (!(entry->flags & MAP_ENTRY_FLAG_NO_CRC) &&
+					chd_crc32(dest, chd->header.hunkbytes) != entry->crc)
+					return CHDERR_DECOMPRESSION_ERROR;
+#endif
 				break;
 
 			/* self-referenced data */

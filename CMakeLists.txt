@@ -173,7 +173,12 @@ if(CHDR_FLAC_BACKEND STREQUAL "microflac")
   if(CHDR_MICROFLAC_SOURCE_DIR)
     set(_microflac_dir "${CHDR_MICROFLAC_SOURCE_DIR}")
   else()
-    if(CHDR_MICROFLAC_GIT_TAG AND NOT CHDR_MICROFLAC_GIT_TAG MATCHES "^[0-9a-fA-F]{40}$")
+    # Length and character class separately: CMake's regex engine has no {n}
+    # repetition, so "[0-9a-f]{40}" silently matches nothing and would reject
+    # every valid SHA.
+    string(LENGTH "${CHDR_MICROFLAC_GIT_TAG}" _chdr_microflac_tag_len)
+    if(CHDR_MICROFLAC_GIT_TAG AND (NOT _chdr_microflac_tag_len EQUAL 40
+        OR NOT CHDR_MICROFLAC_GIT_TAG MATCHES "^[0-9a-fA-F]+$"))
       message(FATAL_ERROR
         "CHDR_MICROFLAC_GIT_TAG must be a 40-character commit SHA, got: "
         "${CHDR_MICROFLAC_GIT_TAG}")

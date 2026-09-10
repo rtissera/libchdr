@@ -127,3 +127,12 @@ if [ -f "$PARENT/base.chd" ]; then
             -op "$PARENT/base.chd" >/dev/null 2>&1 || true
     fi
 fi
+
+# CHDv3/v4 fixtures for tests/legacy_decode.c. chdman only writes v5, so these
+# come from mklegacy.py, which builds the older layouts directly.
+LEGACY="$(cd "$(dirname "$0")" && pwd)/legacy"
+if command -v python3 >/dev/null; then
+    python3 "$(dirname "$0")/mklegacy.py" "$LEGACY"
+else
+    echo "python3 not found, skipping the CHDv3/v4 fixtures" >&2
+fi

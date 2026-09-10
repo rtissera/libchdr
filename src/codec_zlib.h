@@ -51,12 +51,21 @@ struct _zlib_codec_data
 	 * against a 254KB peak for a three-codec CD file. Heap-allocated rather
 	 * than inline because chd_file embeds every codec's state by value. */
 	tinfl_decompressor *	inflater;
+	/* Set when `inflater` is owned by the chd_file rather than by this codec.
+	 * The CD codecs' subcode inflaters are one shared object - a hunk is
+	 * decoded by exactly one CD codec, and tinfl_init() runs on entry to
+	 * every decompress, so nothing carries across - and only the owner
+	 * frees it. */
+	int						borrowed;
 #endif
 };
 
 /* zlib compression codec */
 chd_error zlib_codec_init(void *codec, uint32_t hunkbytes);
 void zlib_codec_free(void *codec);
+#ifndef CHDR_SYSTEM_ZLIB
+void zlib_codec_lend(void *codec, void *owner);
+#endif
 chd_error zlib_codec_decompress(void *codec, const uint8_t *src, uint32_t complen, uint8_t *dest, uint32_t destlen);
 
 #endif /* LIBCHDR_CODEC_ZLIB_H */

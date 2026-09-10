@@ -326,6 +326,17 @@ struct _chd_file
 		avhuff_codec_data		avhuff;		/* avhuff codec data */
 	} codec_data;
 
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+	/* One inflater for every CD codec's subcode stream. cdzl, cdlz and cdfl
+	 * each used to allocate their own, but a hunk is decoded by exactly one
+	 * CD codec and zlib_codec_decompress() runs tinfl_init() on entry, so
+	 * nothing carries from one to the next - three tinfl_decompressor
+	 * instances where one does. At CD geometry that is 16752 bytes back on a
+	 * file using all three, 9.3% of its peak. cdzs is not here: its subcode
+	 * goes through zstd. */
+	zlib_codec_data				subcode_shared;
+#endif
+
 	uint8_t *					file_cache;		/* cache of underlying file */
 
 	/* Compressed read-ahead. libchdr issues one seek+read per hunk, and
@@ -436,6 +447,9 @@ static chd_error header_read(chd_file *chd);
 #endif
 #endif
 
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+static chd_error cd_lend_subcode_inflater(chd_file *chd, uint32_t tag, void *codec);
+#endif
 static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t *dest);
 
 /*-------------------------------------------------
@@ -1877,6 +1891,14 @@ static chd_error ensure_codec_ready(chd_file *chd, size_t slot, void *codec)
 		}
 	}
 
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+	{
+		chd_error lerr = cd_lend_subcode_inflater(chd, chd->codecintf[slot]->compression, codec);
+		if (lerr != CHDERR_NONE)
+			return lerr;
+	}
+#endif
+
 	if (chd->codecintf[slot]->init != NULL)
 	{
 		chd_error err = chd->codecintf[slot]->init(codec, chd->header.hunkbytes);
@@ -2163,6 +2185,13 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 				if (codec == NULL)
 					EARLY_EXIT(err = CHDERR_UNSUPPORTED_FORMAT);
 
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+				err = cd_lend_subcode_inflater(newchd,
+					newchd->header.compression[decompnum], codec);
+				if (err != CHDERR_NONE)
+					EARLY_EXIT(err);
+#endif
+
 				err = newchd->codecintf[decompnum]->init(codec, newchd->header.hunkbytes);
 				if (err != CHDERR_NONE)
 					EARLY_EXIT(err);
@@ -2317,6 +2346,12 @@ CHD_EXPORT void chd_close(chd_file *chd)
 	/* punt if NULL or invalid */
 	if (chd == NULL || chd->cookie != COOKIE_VALUE)
 		return;
+
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+	/* The CD codecs only borrowed this one; free it here, once, after they
+	 * have all dropped their pointers to it. */
+	zlib_codec_free(&chd->subcode_shared);
+#endif
 
 	/* deinit the codec */
 	if (chd->header.version < 5)
@@ -3078,6 +3113,40 @@ static chd_error hunk_read_uncompressed(chd_file *chd, uint64_t offset, size_t s
 	}
 	return CHDERR_NONE;
 }
+
+#if WANT_SUBCODE && !defined(CHDR_SYSTEM_ZLIB)
+/*-------------------------------------------------
+    cd_lend_subcode_inflater - seed a CD codec's
+    subcode inflater from the shared one
+-------------------------------------------------*/
+
+/* Seeds before the codec's own init runs: zlib_codec_init() keeps an inflater
+ * that is already marked borrowed, so nothing is allocated and then thrown
+ * away. Ordering-proof, which matters because LOWRAM_TARGET readies codecs
+ * lazily and in whatever order the hunks ask for them. */
+static chd_error cd_lend_subcode_inflater(chd_file *chd, uint32_t tag, void *codec)
+{
+	void *sub;
+
+	switch (tag)
+	{
+		case CHD_CODEC_CD_ZLIB: sub = &((cdzl_codec_data *)codec)->subcode_decompressor; break;
+		case CHD_CODEC_CD_LZMA: sub = &((cdlz_codec_data *)codec)->subcode_decompressor; break;
+		case CHD_CODEC_CD_FLAC: sub = &((cdfl_codec_data *)codec)->subcode_decompressor; break;
+		default: return CHDERR_NONE;
+	}
+
+	if (chd->subcode_shared.inflater == NULL)
+	{
+		chd_error err = zlib_codec_init(&chd->subcode_shared, 0);
+		if (err != CHDERR_NONE)
+			return err;
+	}
+
+	zlib_codec_lend(sub, &chd->subcode_shared);
+	return CHDERR_NONE;
+}
+#endif
 
 /*-------------------------------------------------
     hunk_read_into_memory - read a hunk into

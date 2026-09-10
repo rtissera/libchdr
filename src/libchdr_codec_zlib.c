@@ -18,13 +18,37 @@ static void zlib_allocator_free(voidpf opaque);
 
 /* ---- bundled miniz: drive tinfl directly, no 32KB dictionary ---- */
 
+/*-------------------------------------------------
+    zlib_codec_lend - point this codec's inflater
+    at one owned elsewhere
+-------------------------------------------------*/
+
+void zlib_codec_lend(void *codec, void *owner)
+{
+	zlib_codec_data *data = (zlib_codec_data *)codec;
+	zlib_codec_data *src = (zlib_codec_data *)owner;
+
+	data->inflater = src->inflater;
+	data->borrowed = 1;
+}
+
 chd_error zlib_codec_init(void *codec, uint32_t hunkbytes)
 {
 	zlib_codec_data *data = (zlib_codec_data *)codec;
 
 	(void)hunkbytes;
 
+	/* A borrowed inflater is seeded before init runs; keep it across the
+	 * wipe rather than allocating a second one. */
+	tinfl_decompressor *lent = data->borrowed ? data->inflater : NULL;
+
 	memset(data, 0, sizeof(zlib_codec_data));
+	if (lent != NULL)
+	{
+		data->inflater = lent;
+		data->borrowed = 1;
+		return CHDERR_NONE;
+	}
 	data->inflater = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
 	if (data->inflater == NULL)
 		return CHDERR_OUT_OF_MEMORY;
@@ -38,8 +62,10 @@ void zlib_codec_free(void *codec)
 
 	if (data != NULL && data->inflater != NULL)
 	{
-		free(data->inflater);
+		if (!data->borrowed)
+			free(data->inflater);
 		data->inflater = NULL;
+		data->borrowed = 0;
 	}
 }
 

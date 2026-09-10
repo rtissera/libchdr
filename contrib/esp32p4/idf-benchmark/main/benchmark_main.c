@@ -778,10 +778,8 @@ static run_result run_one(const char *name, const core_file_callbacks *cb, void 
 	err = chd_open_core_file_callbacks(cb, argp, CHD_OPEN_READ, NULL, &chd);
 	if (err != CHDERR_NONE) {
 		printf("%-48s OPEN FAILED: %s\n", name, chd_error_string(err));
-		/* chd_open_core_file_callbacks()'s cleanup: path calls chd_close()
-		 * (hence core_fclose(argp)) on every failure past its first,
-		 * near-unfailable malloc(sizeof(chd_file)) - i.e. argp is already
-		 * closed here in every failure mode this benchmark actually hits.
+		/* chd_open_core_file_callbacks() closes argp through the callback
+		 * on every failure, so it is already closed here.
 		 * An extra cb->fclose(argp) here is a double-close: harmless on the
 		 * flash path (mem_fclose() is a no-op) but a real double-free of
 		 * the FATFS file object on the SD path, which corrupts a FreeRTOS

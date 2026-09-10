@@ -75,12 +75,10 @@ chd_error chd_fatfs_open(const char *path, FIL *fil, chd_file **chd)
 	if (f_open(fil, path, FA_READ) != FR_OK)
 		return CHDERR_FILE_NOT_FOUND;
 
+	/* on failure libchdr has already closed fil through the callback */
 	err = chd_open_core_file_callbacks(&chd_fatfs_callbacks, fil, CHD_OPEN_READ, NULL, chd);
 	if (err != CHDERR_NONE)
-	{
-		f_close(fil);
 		return err;
-	}
 
 	/* Compressed hunks are small - a few KB - and laid out strictly
 	 * sequentially, so one larger read serves many of them and the fixed cost

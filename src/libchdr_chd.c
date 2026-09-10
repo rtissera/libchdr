@@ -1999,18 +1999,32 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	chd_file *newchd = NULL;
 	chd_error err;
 
-	/* verify parameters */
-	if (callbacks == NULL)
-		EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
+	/* The file and the parent belong to us from here on, whether the open
+	 * succeeds or not: every failure closes both, the way chd_close() of the
+	 * new handle would. Callers depend on that - they retry a child that
+	 * reported CHDERR_REQUIRES_PARENT with a fresh file, and never close the
+	 * parent they passed in. The exits before newchd exists have to do it by
+	 * hand. */
 
-	/* punt if invalid parent */
+	/* verify parameters; with no callbacks there is nothing to close it with */
+	if (callbacks == NULL)
+		return CHDERR_INVALID_PARAMETER;
+
+	/* punt if invalid parent - which is not a chd_file, so not ours to close */
 	if (parent != NULL && parent->cookie != COOKIE_VALUE)
-		EARLY_EXIT(err = CHDERR_INVALID_PARAMETER);
+	{
+		callbacks->fclose((void *)user_data);
+		return CHDERR_INVALID_PARAMETER;
+	}
 
 	/* allocate memory for the final result */
 	newchd = (chd_file *)malloc(sizeof(**chd));
 	if (newchd == NULL)
-		EARLY_EXIT(err = CHDERR_OUT_OF_MEMORY);
+	{
+		callbacks->fclose((void *)user_data);
+		chd_close(parent);
+		return CHDERR_OUT_OF_MEMORY;
+	}
 	memset(newchd, 0, sizeof(*newchd));
 	newchd->cookie = COOKIE_VALUE;
 	newchd->parent = parent;
@@ -2231,8 +2245,8 @@ CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *cal
 	return CHDERR_NONE;
 
 cleanup:
-	if (newchd != NULL)
-		chd_close(newchd);
+	/* closes the file and the parent along with it */
+	chd_close(newchd);
 	return err;
 }
 

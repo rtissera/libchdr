@@ -65,12 +65,11 @@ chd_error chd_esp_vfs_open(const char *path, chd_file **chd)
 	if (!f)
 		return CHDERR_FILE_NOT_FOUND;
 
+	/* on failure libchdr has already closed f through the callback; closing
+	 * it again here would be a double fclose() */
 	err = chd_open_core_file_callbacks(&chd_esp_vfs_callbacks, f, CHD_OPEN_READ, NULL, chd);
 	if (err != CHDERR_NONE)
-	{
-		fclose(f);
 		return err;
-	}
 
 	/* Compressed hunks are small - a few KB - and laid out strictly
 	 * sequentially, so one larger read serves many of them and the fixed cost

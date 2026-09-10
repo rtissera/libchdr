@@ -379,7 +379,19 @@ typedef chd_error (*chd_codec_interface_decompress)(void *codec, const uint8_t *
 /* same as chd_create(), but accepts an already-opened core_file object */
 /* chd_error chd_create_file(core_file *file, uint64_t logicalbytes, uint32_t hunkbytes, uint32_t compression, chd_file *parent); */
 
-/* open an existing CHD file */
+/* open an existing CHD file
+ *
+ * The file handle and the parent are handed over to libchdr by the call,
+ * whether it succeeds or not. On success, chd_close() closes both; on
+ * failure, they have already been closed - through the fclose callback, or
+ * chd_close() for the parent - and must not be closed again. To retry a child
+ * that reported CHDERR_REQUIRES_PARENT, open its file again. The one exception
+ * is chd_open_core_file_callbacks() with NULL callbacks, which has nothing to
+ * close the file with and leaves it to the caller.
+ *
+ * chd_open_file() never closes the FILE it is given, on success or failure:
+ * its fclose callback does nothing. It does take the parent, like the others.
+ * chd_open() closes the file it opened. */
 CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, int mode, chd_file *parent, chd_file **chd);
 CHD_EXPORT chd_error chd_open_core_file(core_file *file, int mode, chd_file *parent, chd_file **chd); /* Legacy; use chd_open_core_file_callbacks instead! */
 CHD_EXPORT chd_error chd_open_file(FILE *file, int mode, chd_file *parent, chd_file **chd);

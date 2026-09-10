@@ -108,6 +108,10 @@
  * (#147). */
 #define CHD_MAX_FILE_SIZE				(1024ULL * 1024 * 1024 * 1024)
 
+/* Ceiling on a materialized CHDv5 hunk map. Not a format limit - it only
+ * bounds one allocation. LOWRAM_TARGET never materializes the map at all. */
+#define CHD_MAX_MAP_SIZE				(256ULL * 1024 * 1024)
+
 #define COOKIE_VALUE				0xbaadf00d
 
 #define END_OF_LIST_COOKIE			"EndOfListCookie"
@@ -861,10 +865,22 @@ static CHDR_INLINE int map_size_v5(chd_header* header, size_t *size)
 {
 	/* Avoid overflow due to corrupted data. */
 	const size_t max_hunkcount = ((size_t)-1 / header->mapentrybytes);
+	uint64_t want;
+
 	if (header->hunkcount > max_hunkcount)
 		return FALSE;
 
-	*size = (size_t)header->hunkcount * header->mapentrybytes;
+	/* A compressed v5 map is entropy-coded, so its on-disk size says nothing
+	 * about how many hunks it holds and cannot be used to bound this. Cap the
+	 * decompressed map directly: CHD_MAX_MAP_SIZE covers every image size
+	 * this library claims to support (over 400GB at CD geometry, ~89GB at
+	 * 4KB hunks) while keeping a malformed hunkcount from asking for more
+	 * memory than any host would hand out. */
+	want = (uint64_t)header->hunkcount * header->mapentrybytes;
+	if (want > CHD_MAX_MAP_SIZE)
+		return FALSE;
+
+	*size = (size_t)want;
 	return TRUE;
 }
 
@@ -2945,13 +2961,25 @@ static chd_error header_read(chd_file *chd)
 	if (header->hunkbytes >= CHD_MAX_HUNK_SIZE || ((uint64_t)header->hunkbytes * (uint64_t)header->totalhunks) >= CHD_MAX_FILE_SIZE)
 		return CHDERR_INVALID_DATA;
 
-	/* totalhunks is used to size the map allocation; a malformed header
-	 * can otherwise request multi-GB allocations for map[] even when the
-	 * file itself is tiny. Every hunk map entry consumes at least one bit
-	 * in the compressed on-disk map, so totalhunks cannot legitimately
-	 * exceed file_size * 8. */
-	if ((uint64_t)header->totalhunks > chd->file_size * 8)
-		return CHDERR_INVALID_DATA;
+	/* totalhunks sizes the map allocation, so a malformed header could
+	 * otherwise ask for multi-GB of map[] against a tiny file.
+	 *
+	 * v1-v4 give an exact bound: their map is a plain array of fixed-size
+	 * entries stored right after the header, so it has to fit in the file.
+	 * v5 gets no equivalent - its map is run-length and Huffman coded, and a
+	 * run of identical, uncompressed or self-referenced hunks costs far less
+	 * than one bit each, so a valid sparse image really can carry far more
+	 * hunks than its own size in bits. Bound what is actually allocated
+	 * instead; see map_size_v5(). */
+	if (header->version < 5)
+	{
+		uint64_t entrysize = (header->version < 3) ? OLD_MAP_ENTRY_SIZE : MAP_ENTRY_SIZE;
+		uint64_t mapend = (uint64_t)header->length +
+			(uint64_t)header->totalhunks * entrysize;
+
+		if (mapend < (uint64_t)header->length || mapend > chd->file_size)
+			return CHDERR_INVALID_DATA;
+	}
 
 	/* guess it worked */
 	return CHDERR_NONE;

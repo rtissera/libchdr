@@ -82,6 +82,16 @@ create_hd hd_multi.chd      -c zlib,lzma,huff,zstd
 # decoder holds the largest per-instance buffer of any codec here.
 create_hd hd_flac.chd       -c flac
 
+# A CHDv5 whose map compresses far below one bit per hunk: 64 MiB of zeros
+# becomes a couple of hundred bytes carrying 16384 hunks, because a run of
+# identical hunks costs almost nothing in the run-length and Huffman coded v5
+# map. Any header check that assumes a lower bound on map size per hunk
+# rejects it - the regression case for issue #190. Its own file, since the
+# shared RAW_HD is far too small to produce a run worth compressing.
+dd if=/dev/zero of="$TMP/sparse.raw" bs=1M count=64 status=none
+chdman createraw -f -o "$CORPUS/rle_sparse.chd" -i "$TMP/sparse.raw" \
+    -hs 4096 -us 2048 -c zlib >/dev/null 2>&1 || true
+
 # CD-ROM: default + per-codec.
 create_cd cd_default.chd
 create_cd cd_none.chd       -c none

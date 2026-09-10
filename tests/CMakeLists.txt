@@ -52,6 +52,15 @@ chdr_test_defines(chdr-legacy-decode)
 add_test(NAME legacy-decode
          COMMAND chdr-legacy-decode "${CMAKE_CURRENT_SOURCE_DIR}/corpus/legacy")
 
+# A sparse CHDv5 whose map carries more hunks than the file has bits. Its own
+# test rather than a seeds/ walk, because what is under test is chd_open()
+# accepting it at all - a header check can reject it before any decode.
+add_executable(chdr-sparse-map sparse_map.c)
+target_link_libraries(chdr-sparse-map PRIVATE chdr-static)
+chdr_test_defines(chdr-sparse-map)
+add_test(NAME sparse-map
+         COMMAND chdr-sparse-map "${CMAKE_CURRENT_SOURCE_DIR}/corpus/seeds/rle_sparse.chd")
+
 # CHDs with a parent: seeds/ has none, and cannot (a child needs its parent, and
 # the workflows there open every file standalone), so COMPRESSION_PARENT would
 # otherwise go untested - including through the in-place CD spread, where a

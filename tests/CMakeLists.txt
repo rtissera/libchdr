@@ -42,6 +42,16 @@ target_link_libraries(chdr-kat PRIVATE chdr-static)
 chdr_test_defines(chdr-kat)
 add_test(NAME known-answer COMMAND chdr-kat)
 
+# v1-v4 hunk CRC32: seeds/ is CHDv5 only (chdman writes nothing older), and
+# these fixtures live outside it for the same reason parent/ does - the
+# workflows that walk seeds/ expect every file there to decode cleanly, and
+# half of these are meant not to.
+add_executable(chdr-legacy-decode legacy_decode.c)
+target_link_libraries(chdr-legacy-decode PRIVATE chdr-static)
+chdr_test_defines(chdr-legacy-decode)
+add_test(NAME legacy-decode
+         COMMAND chdr-legacy-decode "${CMAKE_CURRENT_SOURCE_DIR}/corpus/legacy")
+
 # CHDs with a parent: seeds/ has none, and cannot (a child needs its parent, and
 # the workflows there open every file standalone), so COMPRESSION_PARENT would
 # otherwise go untested - including through the in-place CD spread, where a

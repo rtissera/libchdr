@@ -248,8 +248,17 @@ int flac_decoder_reset(flac_decoder* decoder, uint32_t sample_rate, uint8_t num_
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  /* +2A: start of stream data */
 	};
 	memcpy(decoder->custom_header, s_header_template, sizeof(s_header_template));
-	decoder->custom_header[0x08] = decoder->custom_header[0x0a] = (block_size*num_channels) >> 8;
-	decoder->custom_header[0x09] = decoder->custom_header[0x0b] = (block_size*num_channels) & 0xff;
+	/* STREAMINFO counts inter-channel samples, so the block size goes in as
+	 * given - not multiplied by the channel count, which claimed twice the
+	 * real maximum for stereo and made dr_flac allocate a decoded-sample
+	 * buffer twice the size it needs. Over-declaring is otherwise harmless
+	 * (the value only sizes that buffer and rejects frames larger than it),
+	 * which is why this went unnoticed. The value is exact rather than
+	 * merely safe: the encoder picks its block size with the same function
+	 * the codecs here call to derive this argument. MAME's own decoder
+	 * writes block_size too. */
+	decoder->custom_header[0x08] = decoder->custom_header[0x0a] = block_size >> 8;
+	decoder->custom_header[0x09] = decoder->custom_header[0x0b] = block_size & 0xff;
 	decoder->custom_header[0x12] = sample_rate >> 12;
 	decoder->custom_header[0x13] = sample_rate >> 4;
 	decoder->custom_header[0x14] = (sample_rate << 4) | ((num_channels - 1) << 1);

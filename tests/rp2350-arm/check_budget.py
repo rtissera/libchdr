@@ -23,6 +23,8 @@ import sys
 # on all three targets - rv32imafc, cortex-m33 and hazard3 agree to within
 # 8 bytes on every codec, so these are not architecture-specific and the
 # headroom is for allocator and toolchain drift, not for design changes.
+# hd_flac and cd_cdfl joined the firmware later and their baselines were taken
+# on rv32imafc alone (2026-09-10); the agreement above is why that is enough.
 #
 # Raise one deliberately, in the commit that spends the memory, and say why.
 REGRESSION = {
@@ -30,9 +32,11 @@ REGRESSION = {
 	"hd_zstd": 118_000,   # measured 107_205
 	"hd_lzma":  31_000,   # measured 27_858
 	"hd_huff":  26_000,   # measured 23_219
+	"hd_flac":  27_000,   # measured 24_338
 	"cd_cdzl":  55_000,   # measured 49_786
 	"cd_cdzs": 142_000,   # measured 128_795
 	"cd_cdlz":  64_000,   # measured 57_905
+	"cd_cdfl":  84_000,   # measured 76_329
 }
 
 # Platform ceilings: what this target can actually afford, independent of what

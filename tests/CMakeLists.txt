@@ -61,6 +61,13 @@ chdr_test_defines(chdr-sparse-map)
 add_test(NAME sparse-map
          COMMAND chdr-sparse-map "${CMAKE_CURRENT_SOURCE_DIR}/corpus/seeds/rle_sparse.chd")
 
+# Who closes the file and the parent when an open fails. Builds its images in
+# memory, so it runs without the generated corpus.
+add_executable(chdr-open-ownership open_ownership.c)
+target_link_libraries(chdr-open-ownership PRIVATE chdr-static)
+chdr_test_defines(chdr-open-ownership)
+add_test(NAME open-ownership COMMAND chdr-open-ownership)
+
 # CHDs with a parent: seeds/ has none, and cannot (a child needs its parent, and
 # the workflows there open every file standalone), so COMPRESSION_PARENT would
 # otherwise go untested - including through the in-place CD spread, where a

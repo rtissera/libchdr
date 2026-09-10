@@ -20,18 +20,51 @@ endif()
 
 set(LIBCHDR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 
-# FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND. dr_flac is the
-# default. microflac is measurably faster here - 1.46x on the S3 and 1.41x on
-# the P4 decoding CD audio - but it is C++ and Apache-2.0, so it is not
-# vendored: point CHDR_MICROFLAC_SOURCE_DIR at a checkout, or add
-# esphome/micro-flac to the project's idf_component.yml and point this at
+# FLAC backend. micro-flac is the default here, unlike libchdr itself: on an
+# ESP32-S3 with I/O excluded it is 1.198x on a CD-FLAC hunk and 1.233x on raw
+# FLAC, its peak heap is lower on most images, and an MCU integrator already
+# clones an SDK and a toolchain, so one more pinned checkout costs nothing.
+# libchdr's own default stays dr_flac: a desktop consumer vendoring src/ must
+# not have to fetch anything.
+#
+# The ESP32-P4 has not been re-measured since the STREAMINFO block-size fix,
+# which took an oversized buffer out of dr_flac and most of micro-flac's lead
+# with it - the older 1.41x quoted here is not valid.
+#
+# Set CHDR_FLAC_BACKEND=drflac to go back, e.g. if Apache-2.0 does not suit
+# (micro-flac is Apache-2.0; libchdr stays BSD-3 because this is fetched, never
+# vendored). Or point CHDR_MICROFLAC_SOURCE_DIR at your own checkout, including
+# a managed component at
 # ${CMAKE_BINARY_DIR}/../managed_components/esphome__micro-flac.
 if(NOT DEFINED CHDR_FLAC_BACKEND)
+	set(CHDR_FLAC_BACKEND microflac)
+endif()
+
+# ESP-IDF runs every component CMakeLists in script mode first, just to collect
+# REQUIRES, and FetchContent is not scriptable there (define_property fails).
+# The backend choice does not affect requirements, so that pass takes the
+# in-tree source and the fetch happens once, in the real configure.
+if(CMAKE_SCRIPT_MODE_FILE)
 	set(CHDR_FLAC_BACKEND drflac)
 endif()
+set(CHDR_MICROFLAC_GIT_TAG "ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee"
+	CACHE STRING "micro-flac commit to fetch when no local checkout is given")
 if(CHDR_FLAC_BACKEND STREQUAL "microflac")
 	if(NOT CHDR_MICROFLAC_SOURCE_DIR)
-		message(FATAL_ERROR "CHDR_FLAC_BACKEND=microflac needs CHDR_MICROFLAC_SOURCE_DIR")
+		# Pinned SHA, because the backend compiles against micro-flac's
+		# internals. Fetched at configure time rather than through
+		# idf_component.yml so that this component stands alone.
+		include(FetchContent)
+		# SOURCE_SUBDIR names a directory that does not exist on purpose:
+		# it downloads the sources without running micro-flac's own
+		# CMakeLists, whose targets would otherwise be configured for the
+		# host and joined to this cross build.
+		FetchContent_Declare(microflac
+			GIT_REPOSITORY https://github.com/esphome-libs/micro-flac.git
+			GIT_TAG ${CHDR_MICROFLAC_GIT_TAG}
+			SOURCE_SUBDIR chdr-sources-only)
+		FetchContent_MakeAvailable(microflac)
+		set(CHDR_MICROFLAC_SOURCE_DIR "${microflac_SOURCE_DIR}")
 	endif()
 	# micro-flac enables its Xtensa LPC assembly whenever the core has the
 	# required features, so the .S files must be compiled in on esp32/esp32s3

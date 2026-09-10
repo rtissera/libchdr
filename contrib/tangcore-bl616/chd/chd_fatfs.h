@@ -27,6 +27,13 @@ extern const core_file_callbacks chd_fatfs_callbacks;
 /* Opens path via f_open(FA_READ) into *fil, then hands it to libchdr as the
  * argp for chd_fatfs_callbacks. On any failure, *fil is closed if it was
  * opened and *chd is left untouched. */
+/* Read-ahead window handed to chd_set_cache_budget() on every open. Set to 0
+ * to leave it off. 32KB is the value measured as the knee on the boards where
+ * this was tried; BL616 has not been measured. */
+#ifndef CHD_FATFS_CACHE_BUDGET
+#define CHD_FATFS_CACHE_BUDGET (32 * 1024)
+#endif
+
 chd_error chd_fatfs_open(const char *path, FIL *fil, chd_file **chd);
 
 #ifdef __cplusplus

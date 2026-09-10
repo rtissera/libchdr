@@ -35,22 +35,40 @@ if(NOT DEFINED SD_BAUD_HZ)
 	set(SD_BAUD_HZ 25000000)
 endif()
 
-# The LZMA SDK ships decoder assembly for x86-64 and AArch64 only; Cortex-M33
-# is ARMv8-M Thumb, so neither applies. Z7_LZMA_PROB32 is the one portable
-# knob: it widens the probability model from UInt16 to UInt32, which the SDK
-# notes "can increase the speed on some CPUs" at double the probs memory
-# (+15,980 bytes per LZMA instance at CHD's lc=3/lp=0). Off by default.
-option(CHDR_LZMA_PROB32 "Use 32-bit LZMA probability model" OFF)
 
-# FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND option. dr_flac is
-# the default; microflac needs CHDR_MICROFLAC_SOURCE_DIR pointing at a checkout.
+# FLAC backend. micro-flac is the default here, unlike libchdr itself: it is
+# measurably faster on every board this was tried on (1.198x on a CD-FLAC hunk
+# with I/O excluded on an ESP32-S3, 1.12-1.14x on two real discs here), its
+# peak heap is lower on most images, and its worst-case largest-free-block is
+# better - and an MCU integrator is already cloning an SDK and a toolchain, so
+# one more pinned checkout costs them nothing. libchdr's own default stays
+# dr_flac, because a desktop consumer vendoring src/ must not have to fetch
+# anything.
+#
+# Set CHDR_FLAC_BACKEND=drflac to go back, e.g. if Apache-2.0 does not suit
+# (micro-flac is Apache-2.0; libchdr stays BSD-3 because this is fetched, never
+# vendored).
 if(NOT DEFINED CHDR_FLAC_BACKEND)
-	set(CHDR_FLAC_BACKEND drflac)
+	set(CHDR_FLAC_BACKEND microflac)
 endif()
+set(CHDR_MICROFLAC_GIT_TAG "ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee"
+	CACHE STRING "micro-flac commit to fetch when no local checkout is given")
 if(CHDR_FLAC_BACKEND STREQUAL "microflac")
 	enable_language(CXX)
 	if(NOT CHDR_MICROFLAC_SOURCE_DIR)
-		message(FATAL_ERROR "CHDR_FLAC_BACKEND=microflac needs CHDR_MICROFLAC_SOURCE_DIR")
+		# Same shape as libchdr's own root CMakeLists: pinned SHA, because the
+		# backend compiles against micro-flac's internals.
+		include(FetchContent)
+		# SOURCE_SUBDIR names a directory that does not exist on purpose:
+		# it downloads the sources without running micro-flac's own
+		# CMakeLists, whose targets would otherwise be configured for the
+		# host and joined to this cross build.
+		FetchContent_Declare(microflac
+			GIT_REPOSITORY https://github.com/esphome-libs/micro-flac.git
+			GIT_TAG ${CHDR_MICROFLAC_GIT_TAG}
+			SOURCE_SUBDIR chdr-sources-only)
+		FetchContent_MakeAvailable(microflac)
+		set(CHDR_MICROFLAC_SOURCE_DIR "${microflac_SOURCE_DIR}")
 	endif()
 	set(CHDR_FLAC_SRC
 		${LIBCHDR_ROOT}/src/libchdr_flac_microflac.cpp
@@ -119,11 +137,6 @@ target_compile_definitions(rp2350-bench PRIVATE
 	MINIZ_NO_STDIO
 	MINIZ_NO_TIME
 )
-
-if(CHDR_LZMA_PROB32)
-	set_source_files_properties(${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c
-		PROPERTIES COMPILE_DEFINITIONS Z7_LZMA_PROB32)
-endif()
 
 target_compile_options(rp2350-bench PRIVATE -O3)
 target_link_libraries(rp2350-bench

@@ -47,6 +47,10 @@ env:
   TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
   BOUFFALO_SDK_SHA: 7f44f9ea6b4ccf96db8c5236c8024b68e2a76df7
   FIRMWARE_BL616_SHA: a5a6ea1cf7c81f32c1c3f0f91ea9d913be5ba078
+  # micro-flac is fetched, never vendored: it is Apache-2.0 and libchdr stays
+  # BSD-3 for its other consumers. Pinned, because the backend compiles
+  # against its internals.
+  MICROFLAC_SHA: ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee
 
 jobs:
   bl616-tangcore-build:
@@ -116,6 +120,11 @@ jobs:
           mkdir -p "$F/chd"
           cp contrib/tangcore-bl616/chd/chd_fatfs.h contrib/tangcore-bl616/chd/chd_fatfs.c "$F/chd/"
 
+          # micro-flac is the default backend for this integration; fetched at a
+          # pinned commit, never vendored into libchdr's own tree.
+          git clone -q https://github.com/esphome-libs/micro-flac.git "$F/thirdparty/micro-flac"
+          git -C "$F/thirdparty/micro-flac" checkout -q "$MICROFLAC_SHA"
+
       - name: Build (TANG_BOARD=console60k)
         run: |
           export PATH="${{ github.workspace }}/tangcore-work/toolchain_gcc_t-head_linux/bin:$PATH"
@@ -124,3 +133,19 @@ jobs:
           make 2>&1 | tee build.log
           echo "---- memory region summary ----"
           grep -A 7 "Memory region" build.log
+
+      # The dr_flac fallback has to keep working for anyone Apache-2.0 does not
+      # suit, and nothing else here would notice if the revert patch rotted.
+      - name: Build again with the dr_flac fallback
+        run: |
+          set -euo pipefail
+          export PATH="${{ github.workspace }}/tangcore-work/toolchain_gcc_t-head_linux/bin:$PATH"
+          F=tangcore-work/firmware-bl616
+
+          git -C "$F" apply "${{ github.workspace }}/contrib/tangcore-bl616/patches/firmware-bl616-libchdr-drflac.patch"
+
+          cd "$F"
+          rm -rf build
+          make 2>&1 | tee build-drflac.log
+          echo "---- memory region summary (dr_flac) ----"
+          grep -A 7 "Memory region" build-drflac.log

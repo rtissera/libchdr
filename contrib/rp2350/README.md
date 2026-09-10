@@ -78,6 +78,22 @@ corpus. No RP2350 hardware in CI, so this can't prove `chd_open()`/
 neither build regresses correctness or blows past budget on what CI *can*
 see.
 
+## FLAC backend: micro-flac by default
+
+The benchmark here decodes FLAC through
+[micro-flac](https://github.com/esphome-libs/micro-flac) rather than dr_flac,
+fetched at a pinned commit unless `CHDR_MICROFLAC_SOURCE_DIR` points at a local
+one. `-DCHDR_FLAC_BACKEND=drflac` goes back.
+
+Output is byte-identical. Measured on this board across seven real discs,
+two runs each with a spread under 0.17%: **1.032x** overall, **1.12-1.14x** on
+two of them, and a worst-case largest-free-block of 51 KB against dr_flac's
+47 KB. On an ESP32-S3 with I/O excluded it is 1.198x on a CD-FLAC hunk.
+
+libchdr's own default stays dr_flac - a desktop consumer vendoring `src/`
+should not have to fetch an Apache-2.0 C++ dependency. An MCU integrator is
+already cloning an SDK, so the trade is different here.
+
 ## Real-hardware benchmark (this directory)
 
 The CI workflows above run under QEMU and measure RAM only; as their note

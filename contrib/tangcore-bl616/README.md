@@ -93,126 +93,62 @@ cp /path/to/libchdr/contrib/tangcore-bl616/chd/*.{h,c} chd/
 make  # BL_SDK_BASE defaults to ../bouffalo_sdk, TANG_BOARD defaults to console60k
 ```
 
-## Optional: the micro-flac backend
+## Read-ahead budget
 
-libchdr can decode FLAC through [micro-flac](https://github.com/esphome-libs/micro-flac)
-instead of dr_flac (`CHDR_FLAC_BACKEND=microflac`). Measured on hardware it is
-1.46x faster on an ESP32-S3 and 1.41x on an ESP32-P4 with byte-identical
-output, and most of that comes from its C rather than its Xtensa assembly, so
-RV32 sees it too. It is not wired into the patch above, because the BL616
-integration selects sources with a glob and the backend needs three changes
-that a glob cannot express.
+`chd_fatfs_open()` calls `chd_set_cache_budget()` with 32KB on every open.
+Compressed hunks are small - a few KB - and laid out strictly sequentially, so
+one larger read serves many of them and the fixed cost of each `f_read` (FatFs
+bookkeeping, SPI command setup, DMA, interrupt) is paid far less often.
 
-**Licensing.** micro-flac is Apache-2.0, including its `.S` files. That is
-permissive and does not relicense libchdr, and TangCore's firmware is already
-Apache-2.0 end to end (Bouffalo SDK and firmware-bl616 both), so it adds no
-obligation here. Do not vendor it into libchdr's own tree - fetch it, so
-libchdr stays BSD-3 for its other consumers.
+Measured **1.11x on an ESP32-S3** and **1.05-1.12x on an RP2350**, both reading
+over SPI, with 32KB the knee on the RP2350: 64KB doubled the cost for under
+0.7% more. Not measured on BL616.
 
-**1. Source selection.** `thirdparty/libchdr/src/*.c` globs `libchdr_flac.c`,
-which is the dr_flac backend; compiling both is a duplicate-symbol error. List
-the sources explicitly, or exclude that one file, and add:
+The budget is a ceiling, not an allocation request: an image whose hunks exceed
+it leaves caching off rather than over-allocating. Set `CHD_FATFS_CACHE_BUDGET`
+to 0 to turn it off, or to another size to trade RAM for fewer reads.
 
-    thirdparty/libchdr/src/libchdr_flac_microflac.cpp
-    thirdparty/micro-flac/src/{flac_decoder,decorrelation,frame_header,pcm_packing,crc,lpc}.cpp
+## Two things not to try
 
-with `CHDR_FLAC_BACKEND_MICROFLAC` and `MICRO_FLAC_DISABLE_OGG` defined, and
-`-fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit` on the
-C++ sources (the last one is what ESP-IDF does; without it the objects also
-reference `__cxa_atexit`, which newlib does provide, so it links either way). Put
-only micro-flac's `include/` on the include path - its `src/` holds a `crc.h`
-that will shadow another component's own header of that name.
+Both are recorded with their numbers in `docs/perf-esp32p4-findings.md`:
 
-**2. Do not link with `g++`.** A plain C++ link pulls ~82 KB of libstdc++ even
-with exceptions off: `std::__throw_length_error` drags in `cow-stdexcept`,
-`tinfo`, `cp-demangle` and around fifteen `eh_*.o` objects. ESP-IDF hides this
-by wrapping `__cxa_throw`; the BL616 toolchain does not. Link with the **`gcc`
-driver** (the T-Head GCC is 10.2, which predates `-nostdlib++`) and supply the
-handful of symbols micro-flac actually needs:
+- **`-Os`** is 1.12x *slower* than -O2 on an ESP32-S3. The decoders are
+  loop-heavy and lose more to reduced unrolling than the smaller text wins back.
+- **`Z7_LZMA_PROB32`** costs 15,980 bytes per LZMA instance for a speedup the
+  LZMA SDK only claims for "some CPUs", and was never measured on any target.
+  The option has been removed rather than left as a trap.
 
-```c
-/* everything micro-flac wants from the C++ runtime */
-#include <stdlib.h>
-void *operator new(unsigned sz) { return malloc(sz); }
-void *operator new[](unsigned sz) { return malloc(sz); }
-void operator delete(void *p) noexcept { free(p); }
-void operator delete[](void *p) noexcept { free(p); }
-void operator delete(void *p, unsigned) noexcept { free(p); }
-void operator delete[](void *p, unsigned) noexcept { free(p); }
-namespace std { void __throw_length_error(const char *) { abort(); } }
-```
+## FLAC backend: micro-flac by default
 
-With those flags the only C++ runtime symbols left undefined are the three the
-shim defines - verified by `nm -u` on the compiled objects at the real ABI.
-Measured effect on a test image: 154,514 B of text down to 54,569 B, with zero
-`libstdc++.a` members linked.
+The integration patch decodes FLAC through
+[micro-flac](https://github.com/esphome-libs/micro-flac) rather than dr_flac,
+with byte-identical output. Clone it before applying the patch:
 
-**The shim exists because the toolchain is GCC 10.2, not because of anything
-about this chip.** `-nostdlib++` does the same job in one flag and has been
-available since GCC 11, so if this ever moves to a newer toolchain, delete the
-shim rather than carrying it forward. Do not copy it into a project that is
-already on a modern compiler.
+    git -C thirdparty clone https://github.com/esphome-libs/micro-flac.git
+    git -C thirdparty/micro-flac checkout ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee
 
-**3. Use the vendor toolchain.** The T-Head GCC at
-`toolchain_gcc_t-head_linux` and Debian's `gcc-riscv64-unknown-elf` share the
-`riscv64-unknown-elf-` prefix, so PATH order decides which one you get, and
-`CROSS_COMPILE ?= riscv64-unknown-elf-` does not disambiguate. Debian's ships
-the `g++` driver but **no libstdc++ at all** - no `cstddef`, no `libstdc++.a` -
-so micro-flac will not compile against it, for reasons that say nothing about
-the BL616. Check with `riscv64-unknown-elf-gcc --version`: the vendor one
-reports "Xuantie-900".
+Pinned, because the backend compiles against micro-flac's internals. Fetched,
+never vendored: it is Apache-2.0 and libchdr stays BSD-3 for its other
+consumers. TangCore's firmware is already Apache-2.0 end to end, so it adds no
+obligation here - but if it does not suit you, apply
+`patches/firmware-bl616-libchdr-drflac.patch` on top and you are back on
+dr_flac. CI builds both, so neither path rots.
 
-Upstream GCC is not an option here yet, and it is worth writing down why so
-nobody re-derives it. The T-Head vendor extensions themselves are not the
-obstacle - GCC has had the XThead* collection since GCC 13. Three other things
-are, and all three were still missing when checked against the GCC 15.2 and
-16.1 manuals (2026-09):
+**What is actually known.** Nothing has been measured on BL616 - there is no
+hardware in CI, and this board has never run a decode. On an ESP32-S3 with I/O
+excluded it is **1.198x** on a CD-FLAC hunk and **1.233x** on raw FLAC; across
+eleven real discs **1.072x** overall, 1.21x where the image is FLAC-heavy, and
+**0.988x** on one profile where FLAC barely appears. An RP2350 Cortex-M33 gives
+1.032x overall. Peak heap is lower than dr_flac's on most images, and the
+worst-case largest-free-block is better.
 
-- `-mtune=e907`, which `bouffalo_sdk` sets, is rejected as an unknown cpu.
-  GCC 16 did grow the Xuantie application cores - `xt-c908`, `xt-c910`,
-  `xt-c920` and their variants - but not the small embedded E907.
-- the `p` (packed SIMD) extension in the ABI string below is not in GCC's
-  `-march` table at all; it is still unratified, and the implementations that
-  exist live in vendor forks.
-- `zpsfoperand` and `xtheade` likewise have no upstream spelling.
+Earlier revisions of this file quoted 1.46x and 1.41x. Those predate the
+STREAMINFO block-size fix, which removed an oversized decoded-sample buffer
+from dr_flac and took most of micro-flac's lead with it. Do not use them.
 
-`-mtune=size` is the documented substitute for the first, at the cost of the
-core-specific tuning. The other two have no substitute. The vendor toolchain is
-also frozen: its last commit is from October 2022. So this is a real constraint
-rather than an upgrade nobody got round to.
-
-Clang does not unblock it either, checked at the same time against LLVM main.
-It carries the same XThead* extensions, knows no E907 either (its only Xuantie
-processors are `xt-c910v2` and `xt-c920v2`), and rejects `xtheade` and
-`zpsfoperand` outright. It does have a `p` extension where GCC has none - but
-as `experimental-p` behind `-menable-experimental-extensions`, implementing
-draft 0.21, whereas `zpsfoperand` belongs to the older 0.9.x drafts this core
-was built to. So they are not the same instruction set, and P being ratified
-some day would not by itself make an upstream compiler target this chip.
-
-The vendor fork is the only route, and it has moved since the pin above.
-[XUANTIE-RV/gcc](https://github.com/XUANTIE-RV/gcc) carries three branches
-(checked 2026-09):
-
-| branch | last commit | declares `e907` |
-|---|---|---|
-| `xuantie-gcc-10.2.0` | 2024-07 | yes - c906, c908, c910, c920, e902, e906, e907 |
-| `xuantie-gcc-10.4.0` | 2024-12 | yes, plus the c907 family |
-| `xuantie-gcc-14.1.1` | 2025-03 | **no** - `riscv-cores.def` is upstream's, no Xuantie cores at all |
-
-So the GCC 14 branch cannot build this chip yet; it looks like a rebase in
-progress rather than a finished port. `xuantie-gcc-10.4.0` can, and is two
-years of GCC fixes newer than the GCC 10.2 blob pinned in
-`bl616-tangcore-build.yml` - but it is still below GCC 11, so it does not
-retire the shim above. Moving to it is `firmware-bl616`'s call, not ours.
-
-The community forks are not an alternative: `openbouffalo/xuantie-gnu-toolchain`
-was last pushed in 2023 and `revyos/xuantie-gnu-toolchain` in 2024, both behind
-the upstream they forked.
-
-micro-flac itself compiles clean at the real BL616 ABI
-(`-march=rv32imafcpzpsfoperand_xtheade -mabi=ilp32f`, zero warnings) and its
-object code is smaller than dr_flac's there: 36,304 B against 45,129 B.
+The gain is on the FLAC part of the decode only. On a board reading over SPI,
+storage is usually the larger share of wall time - see the read-ahead budget
+above, which attacks that side.
 
 ## Status (2026-08-25)
 

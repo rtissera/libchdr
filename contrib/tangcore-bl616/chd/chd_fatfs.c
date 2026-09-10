@@ -77,7 +77,23 @@ chd_error chd_fatfs_open(const char *path, FIL *fil, chd_file **chd)
 
 	err = chd_open_core_file_callbacks(&chd_fatfs_callbacks, fil, CHD_OPEN_READ, NULL, chd);
 	if (err != CHDERR_NONE)
+	{
 		f_close(fil);
+		return err;
+	}
 
-	return err;
+	/* Compressed hunks are small - a few KB - and laid out strictly
+	 * sequentially, so one larger read serves many of them and the fixed cost
+	 * of each f_read (FatFs bookkeeping, SPI command setup, DMA, interrupt)
+	 * is paid far less often. Measured 1.11x on an ESP32-S3 and 1.05-1.12x on
+	 * an RP2350, both reading over SPI, with 32KB the knee on the RP2350: 64KB
+	 * doubled the cost for under 0.7% more.
+	 *
+	 * Not measured on BL616. The budget is a ceiling, not an allocation
+	 * request: an image whose hunks exceed it simply leaves caching off rather
+	 * than over-allocating, and a failure here is not fatal to the open. */
+	if (CHD_FATFS_CACHE_BUDGET != 0)
+		(void)chd_set_cache_budget(*chd, CHD_FATFS_CACHE_BUDGET);
+
+	return CHDERR_NONE;
 }

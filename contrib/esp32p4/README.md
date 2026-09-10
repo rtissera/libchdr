@@ -36,6 +36,43 @@ directory provides instead:
    `esp_vfs_fat_sdmmc_mount()` for SD/MMC), then call
    `chd_esp_vfs_open("/sdcard/game.chd", &chd)`.
 
+## Options worth setting, and what they measured
+
+`chd_esp_vfs_open()` already calls `chd_set_cache_budget()` with 32KB.
+Compressed hunks are a few KB and laid out sequentially, so one larger read
+serves many and the per-read fixed cost is paid far less often: **1.11x on an
+ESP32-S3** over SPI, **1.05-1.12x on an RP2350** with 32KB the knee there. The
+P4's own number has not been taken. Set `CHD_ESP_VFS_CACHE_BUDGET` to 0 to turn
+it off.
+
+**micro-flac is the default backend here**, unlike libchdr itself. The
+component fetches it at a pinned commit when `CHDR_MICROFLAC_SOURCE_DIR` is not
+given - point that at your own checkout, or at a managed component under
+`managed_components/esphome__micro-flac`, if you would rather not fetch.
+`CHDR_FLAC_BACKEND=drflac` goes back to dr_flac.
+
+Output is byte-identical either way. On an ESP32-S3 with I/O excluded:
+**1.198x** on a CD-FLAC hunk, **1.233x** on raw FLAC. Across eleven real discs:
+**1.072x** overall, 1.21x where the image is FLAC-heavy, **0.988x** on one
+profile where FLAC barely appears. Peak heap is lower than dr_flac's on most
+images.
+
+libchdr's own default stays dr_flac: a desktop consumer vendoring `src/` must
+not have to fetch anything, and micro-flac is C++ and Apache-2.0. An MCU
+integrator is already cloning an SDK and a toolchain, so one more pinned
+checkout costs nothing - hence the different default on this side.
+
+An earlier revision of this file quoted 1.41x for the P4. That predates the
+STREAMINFO block-size fix, which removed an oversized decoded-sample buffer
+from dr_flac and took most of micro-flac's lead with it. **The P4 has not been
+re-measured since**; treat the S3 numbers above as the estimate until it is.
+
+Two things not to try, both with their numbers in
+`../../docs/perf-esp32p4-findings.md`: **`-Os`** is 1.12x *slower* than the
+`PERF` (-O2) default on an S3, and **`Z7_LZMA_PROB32`** costs 15,980 bytes per
+LZMA instance for a speedup the LZMA SDK only claims for "some CPUs" and that
+was never measured on any target.
+
 ## CI
 
 Two workflows:

@@ -32,6 +32,13 @@ extern const core_file_callbacks chd_esp_vfs_callbacks;
 /* Opens path via fopen("rb"), then hands it to libchdr as the argp for
  * chd_esp_vfs_callbacks. On any failure, the FILE* is closed if it was
  * opened and *chd is left untouched. */
+/* Read-ahead window handed to chd_set_cache_budget() on every open. Set to 0
+ * to leave it off. 32KB is the knee measured on the boards where this was
+ * tried; the ESP32-P4's own number has not been taken. */
+#ifndef CHD_ESP_VFS_CACHE_BUDGET
+#define CHD_ESP_VFS_CACHE_BUDGET (32 * 1024)
+#endif
+
 chd_error chd_esp_vfs_open(const char *path, chd_file **chd);
 
 #ifdef __cplusplus

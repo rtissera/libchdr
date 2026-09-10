@@ -24,9 +24,11 @@ BUDGETS = {
 	"hd_zstd": 200_000,
 	"hd_lzma": 80_000,
 	"hd_huff": 60_000,
+	"hd_flac": 100_000,
 	"cd_cdzl": 250_000,
 	"cd_cdzs": 400_000,
 	"cd_cdlz": 250_000,
+	"cd_cdfl": 250_000,
 }
 
 FAIL_RE = re.compile(r"^(\S+)\s+(?:OPEN|READ) FAILED: (.*)$")

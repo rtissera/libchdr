@@ -20,9 +20,11 @@
 #include "embed/hd_zstd.h"
 #include "embed/hd_lzma.h"
 #include "embed/hd_huff.h"
+#include "embed/hd_flac.h"
 #include "embed/cd_cdzl.h"
 #include "embed/cd_cdzs.h"
 #include "embed/cd_cdlz.h"
+#include "embed/cd_cdfl.h"
 
 /* ---- malloc high-water-mark wrapper (linked via --wrap) ---- */
 
@@ -165,9 +167,11 @@ int main(void)
 	run_one("hd_zstd", hd_zstd_chd, hd_zstd_chd_len);
 	run_one("hd_lzma", hd_lzma_chd, hd_lzma_chd_len);
 	run_one("hd_huff", hd_huff_chd, hd_huff_chd_len);
+	run_one("hd_flac", hd_flac_chd, hd_flac_chd_len);
 	run_one("cd_cdzl", cd_cdzl_chd, cd_cdzl_chd_len);
 	run_one("cd_cdzs", cd_cdzs_chd, cd_cdzs_chd_len);
 	run_one("cd_cdlz", cd_cdlz_chd, cd_cdlz_chd_len);
+	run_one("cd_cdfl", cd_cdfl_chd, cd_cdfl_chd_len);
 	printf("=== done ===\n");
 	return 0;
 }

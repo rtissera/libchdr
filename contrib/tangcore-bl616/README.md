@@ -93,15 +93,56 @@ cp /path/to/libchdr/contrib/tangcore-bl616/chd/*.{h,c} chd/
 make  # BL_SDK_BASE defaults to ../bouffalo_sdk, TANG_BOARD defaults to console60k
 ```
 
+## Read-ahead budget
+
+`chd_fatfs_open()` calls `chd_set_cache_budget()` with 32KB on every open.
+Compressed hunks are small - a few KB - and laid out strictly sequentially, so
+one larger read serves many of them and the fixed cost of each `f_read` (FatFs
+bookkeeping, SPI command setup, DMA, interrupt) is paid far less often.
+
+Measured **1.11x on an ESP32-S3** and **1.05-1.12x on an RP2350**, both reading
+over SPI, with 32KB the knee on the RP2350: 64KB doubled the cost for under
+0.7% more. Not measured on BL616.
+
+The budget is a ceiling, not an allocation request: an image whose hunks exceed
+it leaves caching off rather than over-allocating. Set `CHD_FATFS_CACHE_BUDGET`
+to 0 to turn it off, or to another size to trade RAM for fewer reads.
+
+## Two things not to try
+
+Both are recorded with their numbers in `docs/perf-esp32p4-findings.md`:
+
+- **`-Os`** is 1.12x *slower* than -O2 on an ESP32-S3. The decoders are
+  loop-heavy and lose more to reduced unrolling than the smaller text wins back.
+- **`Z7_LZMA_PROB32`** costs 15,980 bytes per LZMA instance for a speedup the
+  LZMA SDK only claims for "some CPUs", and was never measured on any target.
+  The option has been removed rather than left as a trap.
+
 ## Optional: the micro-flac backend
 
 libchdr can decode FLAC through [micro-flac](https://github.com/esphome-libs/micro-flac)
-instead of dr_flac (`CHDR_FLAC_BACKEND=microflac`). Measured on hardware it is
-1.46x faster on an ESP32-S3 and 1.41x on an ESP32-P4 with byte-identical
-output, and most of that comes from its C rather than its Xtensa assembly, so
-RV32 sees it too. It is not wired into the patch above, because the BL616
-integration selects sources with a glob and the backend needs three changes
-that a glob cannot express.
+instead of dr_flac (`CHDR_FLAC_BACKEND=microflac`), with byte-identical output.
+
+Apply `patches/firmware-bl616-libchdr-microflac.patch` on top of the
+integration patch, with a micro-flac checkout at `thirdparty/micro-flac`. CI
+builds both variants, so the C++ backend is known to compile and link against
+this vendor GCC 10.2 and its bare-metal libc.
+
+**What to expect, and what is actually known.** Nothing has ever been measured
+on BL616 - there is no hardware in CI. On an ESP32-S3, with I/O excluded, it is
+**1.198x** on a CD-FLAC hunk and **1.233x** on raw FLAC; across eleven real
+discs it is **1.072x** overall, 1.21x where the image is FLAC-heavy, and
+**0.988x** on one profile where FLAC barely appears. An RP2350 Cortex-M33 gives
+1.032x overall.
+
+Earlier revisions of this file quoted 1.46x and 1.41x. Those predate the
+STREAMINFO block-size fix, which removed an oversized decoded-sample buffer
+from dr_flac and took most of micro-flac's lead with it. Do not use them.
+
+The gain is on the FLAC part of the decode only. On a board reading over SPI,
+storage is usually the larger share of wall time, so measure end to end before
+concluding anything - and see the read-ahead budget below, which attacks that
+side and is wired in by default.
 
 **Licensing.** micro-flac is Apache-2.0, including its `.S` files. That is
 permissive and does not relicense libchdr, and TangCore's firmware is already

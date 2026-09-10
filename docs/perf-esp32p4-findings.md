@@ -208,6 +208,33 @@ a stack array. SWAR wins everywhere and needs no gating.
    chdman's precision keeps `bps + precision + ilog2(order)` <= 32. dr_flac
    already uses the 32-bit path exclusively.
 
+### -Os: slower, not smaller where it counts
+
+Measured on an ESP32-S3: **1.12x slower** than the `PERF` (-O2) default across
+the decode corpus. The decoders are loop-heavy and their hot paths lose more to
+the smaller unrolling than the smaller text buys back on a cached part. The
+contrib benchmarks build -O2 (ESP-IDF `PERF`) and -O3 (RP2350 Release)
+deliberately.
+
+Do not reach for -Os as an MCU default. It is a plausible-sounding change with
+a measured negative.
+
+### Z7_LZMA_PROB32: dropped, never justified
+
+The LZMA SDK ships decoder assembly for x86-64 and AArch64 only, so neither
+applies to Cortex-M33, RV32 or Xtensa. `Z7_LZMA_PROB32` was the one portable
+knob left: it widens the probability model from `UInt16` to `UInt32`, which the
+SDK says "can increase the speed on some CPUs", at **+15,980 bytes per LZMA
+instance** at CHD's lc=3/lp=0.
+
+It was exposed as an option on RP2350 and **never measured on any target**. On
+parts where the whole point is fitting in a few hundred KB, a 16KB-per-instance
+cost against an unquantified "some CPUs" is not a trade worth carrying. The
+option is removed rather than left as a trap.
+
+If anyone revisits it: measure it, on hardware, against the RAM it costs -
+"the SDK says it might help" is not a result.
+
 ### PIE (ESP32-P4 vector extension): not worth it
 
 Four independent reasons. The LPC recurrence is serial across samples; only the

@@ -47,6 +47,10 @@ env:
   TOOLCHAIN_SHA: c4afe91cbd01bf7dce525e0d23b4219c8691e8f0
   BOUFFALO_SDK_SHA: 7f44f9ea6b4ccf96db8c5236c8024b68e2a76df7
   FIRMWARE_BL616_SHA: a5a6ea1cf7c81f32c1c3f0f91ea9d913be5ba078
+  # micro-flac is fetched, never vendored: it is Apache-2.0 and libchdr stays
+  # BSD-3 for its other consumers. Pinned, because the backend compiles
+  # against its internals.
+  MICROFLAC_SHA: ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee
 
 jobs:
   bl616-tangcore-build:
@@ -124,3 +128,24 @@ jobs:
           make 2>&1 | tee build.log
           echo "---- memory region summary ----"
           grep -A 7 "Memory region" build.log
+
+      # The micro-flac backend is C++ built by a vendor GCC 10.2 against a
+      # bare-metal libc. Nothing else here proves that combination links, and
+      # the integration patch for it cannot be exercised any other way without
+      # BL616 hardware.
+      - name: Build again with the micro-flac backend
+        run: |
+          set -euo pipefail
+          export PATH="${{ github.workspace }}/tangcore-work/toolchain_gcc_t-head_linux/bin:$PATH"
+          F=tangcore-work/firmware-bl616
+
+          git -C "$F" clone -q https://github.com/esphome-libs/micro-flac.git thirdparty/micro-flac
+          git -C "$F/thirdparty/micro-flac" checkout -q "$MICROFLAC_SHA"
+
+          git -C "$F" apply "${{ github.workspace }}/contrib/tangcore-bl616/patches/firmware-bl616-libchdr-microflac.patch"
+
+          cd "$F"
+          rm -rf build
+          make 2>&1 | tee build-microflac.log
+          echo "---- memory region summary (micro-flac) ----"
+          grep -A 7 "Memory region" build-microflac.log

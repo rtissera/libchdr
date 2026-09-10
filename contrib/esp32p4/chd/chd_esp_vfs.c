@@ -67,7 +67,22 @@ chd_error chd_esp_vfs_open(const char *path, chd_file **chd)
 
 	err = chd_open_core_file_callbacks(&chd_esp_vfs_callbacks, f, CHD_OPEN_READ, NULL, chd);
 	if (err != CHDERR_NONE)
+	{
 		fclose(f);
+		return err;
+	}
 
-	return err;
+	/* Compressed hunks are small - a few KB - and laid out strictly
+	 * sequentially, so one larger read serves many of them and the fixed cost
+	 * of each read (VFS dispatch, FATFS bookkeeping, controller command setup,
+	 * DMA, interrupt) is paid far less often. Measured 1.11x on an ESP32-S3
+	 * reading over SPI, and 1.05-1.12x on an RP2350 with 32KB the knee there.
+	 *
+	 * A ceiling, not an allocation request: an image whose hunks exceed it
+	 * leaves caching off rather than over-allocating, and failing to set it is
+	 * not fatal to the open. */
+	if (CHD_ESP_VFS_CACHE_BUDGET != 0)
+		(void)chd_set_cache_budget(*chd, CHD_ESP_VFS_CACHE_BUDGET);
+
+	return CHDERR_NONE;
 }

@@ -35,12 +35,6 @@ if(NOT DEFINED SD_BAUD_HZ)
 	set(SD_BAUD_HZ 25000000)
 endif()
 
-# The LZMA SDK ships decoder assembly for x86-64 and AArch64 only; Cortex-M33
-# is ARMv8-M Thumb, so neither applies. Z7_LZMA_PROB32 is the one portable
-# knob: it widens the probability model from UInt16 to UInt32, which the SDK
-# notes "can increase the speed on some CPUs" at double the probs memory
-# (+15,980 bytes per LZMA instance at CHD's lc=3/lp=0). Off by default.
-option(CHDR_LZMA_PROB32 "Use 32-bit LZMA probability model" OFF)
 
 # FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND option. dr_flac is
 # the default; microflac needs CHDR_MICROFLAC_SOURCE_DIR pointing at a checkout.
@@ -119,11 +113,6 @@ target_compile_definitions(rp2350-bench PRIVATE
 	MINIZ_NO_STDIO
 	MINIZ_NO_TIME
 )
-
-if(CHDR_LZMA_PROB32)
-	set_source_files_properties(${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c
-		PROPERTIES COMPILE_DEFINITIONS Z7_LZMA_PROB32)
-endif()
 
 target_compile_options(rp2350-bench PRIVATE -O3)
 target_link_libraries(rp2350-bench

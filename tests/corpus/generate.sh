@@ -76,6 +76,11 @@ create_hd hd_lzma.chd       -c lzma
 create_hd hd_huff.chd       -c huff
 create_hd hd_zstd.chd       -c zstd
 create_hd hd_multi.chd      -c zlib,lzma,huff,zstd
+# The raw FLAC codec, on its own. hd_default happens to include flac hunks
+# because that is one of chdman's default hard-disk codecs, but relying on a
+# default to cover a codec is how a codec stops being covered - and the FLAC
+# decoder holds the largest per-instance buffer of any codec here.
+create_hd hd_flac.chd       -c flac
 
 # CD-ROM: default + per-codec.
 create_cd cd_default.chd
@@ -126,4 +131,13 @@ if [ -f "$PARENT/base.chd" ]; then
         chdman createcd -f -o "$PARENT/mixed.chd" -i "$TMP/ext.cue" \
             -op "$PARENT/base.chd" >/dev/null 2>&1 || true
     fi
+fi
+
+# CHDv3/v4 fixtures for tests/legacy_decode.c. chdman only writes v5, so these
+# come from mklegacy.py, which builds the older layouts directly.
+LEGACY="$(cd "$(dirname "$0")" && pwd)/legacy"
+if command -v python3 >/dev/null; then
+    python3 "$(dirname "$0")/mklegacy.py" "$LEGACY"
+else
+    echo "python3 not found, skipping the CHDv3/v4 fixtures" >&2
 fi

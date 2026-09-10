@@ -42,9 +42,11 @@ PLATFORM = {
 	"hd_zstd": 150_000,
 	"hd_lzma": 80_000,
 	"hd_huff": 200_000,
+	"hd_flac": 100_000,
 	"cd_cdzl": 200_000,
 	"cd_cdzs": 320_000,
 	"cd_cdlz": 200_000,
+	"cd_cdfl": 250_000,
 }
 
 FAIL_RE = re.compile(r"^(\S+)\s+(?:OPEN|READ) FAILED: (.*)$")

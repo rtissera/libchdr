@@ -13,8 +13,10 @@ mkdir -p "$OUT_DIR"
 
 # One representative CHD per decompressor the RAM-budget check cares about:
 # every HD/raw codec (small hunks) plus every CD sub-codec (large hunks, the
-# ones that pay for a subcode decompressor on top of the base one).
-FILES=(hd_zlib hd_zstd hd_lzma hd_huff cd_cdzl cd_cdzs cd_cdlz)
+# ones that pay for a subcode decompressor on top of the base one). FLAC is in
+# the list because its decoder holds the largest per-instance buffer of any
+# codec here - leaving it out is how an oversized allocation went unnoticed.
+FILES=(hd_zlib hd_zstd hd_lzma hd_huff hd_flac cd_cdzl cd_cdzs cd_cdlz cd_cdfl)
 
 for f in "${FILES[@]}"; do
 	src="$SEEDS_DIR/${f}.chd"

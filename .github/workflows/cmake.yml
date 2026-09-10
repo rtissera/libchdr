@@ -47,8 +47,15 @@ jobs:
       - name: Build
         run: cmake --build ${{github.workspace}}/build --config Release
 
-      # Known-answer tests for the hand-optimised ECC and CRC16 primitives.
-      # Runs across the whole matrix so the pinned values are checked on
-      # x86-64, arm64, macOS and Windows rather than one host.
+      # The CHDv3/v4 fixtures need nothing but a Python interpreter - unlike
+      # the CHDv5 corpus, which needs chdman. Without them legacy-decode
+      # skips itself, so a runner missing python3 loses coverage rather than
+      # failing.
+      - name: Generate the CHDv3/v4 fixtures
+        shell: bash
+        run: python3 tests/corpus/mklegacy.py tests/corpus/legacy || true
+
+      # Known-answer tests for the hand-optimised ECC and CRC16 primitives,
+      # plus the decode tests that have their corpus.
       - name: Known-answer tests
         run: ctest --test-dir ${{github.workspace}}/build -C Release --output-on-failure

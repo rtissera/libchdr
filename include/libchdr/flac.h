@@ -22,6 +22,37 @@
  */
 
 typedef struct _flac_decoder flac_decoder;
+
+#if defined(CHDR_FLAC_BACKEND_MICROFLAC)
+
+/* micro-flac backend. The decoder is a C++ object, but this header is included
+ * from C, so it is placement-new'd into an opaque buffer here rather than
+ * heap-allocated - the codecs embed flac_decoder by value and an allocation
+ * per codec instance is exactly what the dr_flac arena work removed.
+ * libchdr_flac_microflac.cpp static_asserts that the object fits. */
+struct _flac_decoder {
+	uint32_t                sample_rate;
+	uint8_t                 channels;
+	uint8_t                 bits_per_sample;
+	int                     alloc_failed;			/* set when a decode could not allocate */
+	const uint8_t *         payload;				/* compressed data after the synthesised header */
+	uint32_t                payload_length;
+	uint32_t                payload_consumed;		/* what finish() reports */
+	int                     header_done;			/* STREAMINFO parsed for this stream */
+	uint8_t                 custom_header[0x2a];	/* synthesised STREAMINFO */
+	/* micro-flac sizes its output buffer as max_block_size * channels *
+	 * bytes_per_sample, and libchdr's synthesised header carries
+	 * block_size * channels in max_block_size - so it asks for twice the
+	 * bytes a cdfl hunk's audio actually occupies. Decode into this and copy
+	 * out. Retained across hunks, like the dr_flac backend's block. */
+	int16_t *               scratch;
+	uint32_t                scratch_size;
+	int                     constructed;			/* impl[] holds a live object */
+	unsigned long long      impl[64];				/* opaque, 8-byte aligned */
+};
+
+#else
+
 struct _flac_decoder {
 		/* output state */
 	void *                  decoder;				/* actual encoder */
@@ -47,6 +78,8 @@ struct _flac_decoder {
 	int                     arena_busy;				/* lent to dr_flac right now */
 	uint8_t                 custom_header[0x2a];	/* custom header */
 };
+
+#endif /* CHDR_FLAC_BACKEND_MICROFLAC */
 
 /* ======================> flac_decoder */
 

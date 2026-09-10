@@ -27,6 +27,17 @@ option(CHDR_WANT_TESTS "Build tests for the library" ON)
 # linearly, and never read.
 set(CHDR_CD_SCRATCH_BUFFER "" CACHE STRING "Decode CD sectors via a private scratch buffer (ON/OFF; default follows CHDR_LOWRAM_TARGET)")
 
+# FLAC backend. dr_flac is the default and needs nothing extra. microflac is
+# faster on MCUs (measured 1.46x on ESP32-S3, 1.41x on ESP32-P4, bit-identical
+# output) and smaller, but it is C++ and Apache-2.0, so it is fetched at build
+# time rather than vendored - libchdr's own tree stays BSD-3 and a default
+# build never touches the network. Point CHDR_MICROFLAC_SOURCE_DIR at a local
+# checkout to build offline.
+set(CHDR_FLAC_BACKEND "drflac" CACHE STRING "FLAC decoder backend: drflac or microflac")
+set_property(CACHE CHDR_FLAC_BACKEND PROPERTY STRINGS drflac microflac)
+set(CHDR_MICROFLAC_SOURCE_DIR "" CACHE PATH "Local micro-flac checkout (skips the fetch)")
+set(CHDR_MICROFLAC_GIT_TAG "" CACHE STRING "micro-flac commit to fetch (40-char SHA)")
+
 option(BUILD_LTO "Compile libchdr with link-time optimization if supported" OFF)
 if(BUILD_LTO)
   include(CheckIPOSupported)
@@ -156,6 +167,52 @@ endif()
 # chdr
 #--------------------------------------------------
 
+if(CHDR_FLAC_BACKEND STREQUAL "microflac")
+  enable_language(CXX)
+  set(CHDR_FLAC_BACKEND_SOURCE src/libchdr_flac_microflac.cpp)
+  if(CHDR_MICROFLAC_SOURCE_DIR)
+    set(_microflac_dir "${CHDR_MICROFLAC_SOURCE_DIR}")
+  else()
+    # Length and character class separately: CMake's regex engine has no {n}
+    # repetition, so "[0-9a-f]{40}" silently matches nothing and would reject
+    # every valid SHA.
+    string(LENGTH "${CHDR_MICROFLAC_GIT_TAG}" _chdr_microflac_tag_len)
+    if(CHDR_MICROFLAC_GIT_TAG AND (NOT _chdr_microflac_tag_len EQUAL 40
+        OR NOT CHDR_MICROFLAC_GIT_TAG MATCHES "^[0-9a-fA-F]+$"))
+      message(FATAL_ERROR
+        "CHDR_MICROFLAC_GIT_TAG must be a 40-character commit SHA, got: "
+        "${CHDR_MICROFLAC_GIT_TAG}")
+    endif()
+    if(NOT CHDR_MICROFLAC_GIT_TAG)
+      message(FATAL_ERROR
+        "CHDR_FLAC_BACKEND=microflac needs either CHDR_MICROFLAC_SOURCE_DIR (a local "
+        "checkout) or CHDR_MICROFLAC_GIT_TAG (a 40-character commit SHA). Branch names "
+        "are deliberately not accepted: the backend is compiled against micro-flac's "
+        "internals, so the build must be reproducible.")
+    endif()
+    include(FetchContent)
+    FetchContent_Declare(microflac
+      GIT_REPOSITORY https://github.com/esphome-libs/micro-flac.git
+      GIT_TAG ${CHDR_MICROFLAC_GIT_TAG})
+    FetchContent_MakeAvailable(microflac)
+    set(_microflac_dir "${microflac_SOURCE_DIR}")
+  endif()
+  set(CHDR_MICROFLAC_SOURCES
+    ${_microflac_dir}/src/flac_decoder.cpp
+    ${_microflac_dir}/src/decorrelation.cpp
+    ${_microflac_dir}/src/frame_header.cpp
+    ${_microflac_dir}/src/pcm_packing.cpp
+    ${_microflac_dir}/src/crc.cpp
+    ${_microflac_dir}/src/lpc.cpp)
+  list(APPEND CHDR_DEFINES CHDR_FLAC_BACKEND_MICROFLAC MICRO_FLAC_DISABLE_OGG)
+elseif(CHDR_FLAC_BACKEND STREQUAL "drflac")
+  set(CHDR_FLAC_BACKEND_SOURCE src/libchdr_flac.c)
+  set(CHDR_MICROFLAC_SOURCES "")
+  set(_microflac_dir "")
+else()
+  message(FATAL_ERROR "CHDR_FLAC_BACKEND must be drflac or microflac, got: ${CHDR_FLAC_BACKEND}")
+endif()
+
 set(CHDR_SOURCES
   src/libchdr_bitstream.c
   src/libchdr_cdrom.c
@@ -170,12 +227,34 @@ set(CHDR_SOURCES
   src/libchdr_codec_lzma.c
   src/libchdr_codec_zlib.c
   src/libchdr_codec_zstd.c
-  src/libchdr_flac.c
+  ${CHDR_FLAC_BACKEND_SOURCE}
   src/libchdr_huffman.c
+  ${CHDR_MICROFLAC_SOURCES}
 )
+
+
+# Applies the micro-flac include paths and the C++ settings that keep its
+# runtime footprint down. -fno-exceptions/-fno-rtti are what let a bare-metal
+# link avoid pulling in libstdc++'s exception and RTTI machinery, and
+# -fno-threadsafe-statics drops the __cxa_guard_* dependency.
+function(chdr_apply_microflac target)
+  if(NOT CHDR_FLAC_BACKEND STREQUAL "microflac")
+    return()
+  endif()
+  # Public include dir only: micro-flac's src/ contains a crc.h that will
+  # shadow a consumer's own header of that name, and its sources reach their
+  # private headers relative to themselves anyway.
+  target_include_directories(${target} PRIVATE
+    ${_microflac_dir}/include)
+  target_compile_options(${target} PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>)
+endfunction()
 
 add_library(chdr-static STATIC ${CHDR_SOURCES})
 target_include_directories(chdr-static INTERFACE include)
+chdr_apply_microflac(chdr-static)
 target_link_libraries(chdr-static PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
 # libchdr_codec_zlib.c calls tinfl_decompress() directly, so it must be renamed
 # alongside miniz's definition - otherwise on ESP-IDF this call binds to the
@@ -207,6 +286,7 @@ endif()
 if (BUILD_SHARED_LIBS)
   add_library(chdr SHARED ${CHDR_SOURCES})
   target_include_directories(chdr INTERFACE include)
+  chdr_apply_microflac(chdr)
   target_link_libraries(chdr PRIVATE ${CHDR_LIBS} ${PLATFORM_LIBS})
   if(CHDR_NEEDS_MINIZ_RENAME)
     libchdr_apply_esp_rom_miniz_workaround(chdr)
@@ -232,7 +312,7 @@ if (BUILD_SHARED_LIBS)
 
   set_target_properties(chdr PROPERTIES C_VISIBILITY_PRESET hidden)
   set_target_properties(chdr PROPERTIES VISIBILITY_INLINES_HIDDEN 1)
-  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/flac.h;include/libchdr/huffman.h;include/libchdr/macros.h")
+  set_target_properties(chdr PROPERTIES PUBLIC_HEADER "include/libchdr/bitstream.h;include/libchdr/cdrom.h;include/libchdr/chd.h;include/libchdr/chdconfig.h;include/libchdr/coretypes.h;include/libchdr/huffman.h;include/libchdr/macros.h")
   set_target_properties(chdr PROPERTIES VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}" SOVERSION ${PROJECT_VERSION_MAJOR})
 
   if (CMAKE_BUILD_TYPE MATCHES Release)

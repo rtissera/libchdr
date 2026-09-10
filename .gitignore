@@ -22,5 +22,6 @@ contrib/esp32p4/idf-benchmark/main/embed/
 contrib/esp32p4/idf-benchmark/main/embed_list.inc
 contrib/esp32p4/idf-benchmark/main/embed_includes.inc
 contrib/esp32p4/idf-benchmark/build/
+contrib/esp32p4/idf-benchmark/build-*/
 contrib/esp32p4/idf-benchmark/sdkconfig
 contrib/esp32p4/idf-benchmark/sdkconfig.old

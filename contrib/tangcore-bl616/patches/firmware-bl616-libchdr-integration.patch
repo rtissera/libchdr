@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e7d0fe..b748fb3 100644
+index 8e7d0fe..83ffe15 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -26,11 +26,26 @@ elseif(TANG_BOARD STREQUAL "nano20k")
+@@ -26,11 +26,29 @@ elseif(TANG_BOARD STREQUAL "nano20k")
      add_definitions(-DTANG_NANO20K)
  endif()
  
@@ -13,6 +13,8 @@ index 8e7d0fe..b748fb3 100644
 +    -DWANT_RAW_DATA_SECTOR=1
 +    -DWANT_SUBCODE=1
 +    -DVERIFY_BLOCK_CRC=1
++    -DCHDR_FLAC_BACKEND_MICROFLAC
++    -DMICRO_FLAC_DISABLE_OGG
 +    -DMINIZ_NO_ARCHIVE_APIS
 +    -DMINIZ_NO_DEFLATE_APIS
 +    -DMINIZ_NO_STDIO
@@ -27,10 +29,11 @@ index 8e7d0fe..b748fb3 100644
 +    . usb fpga ui core utils chd
 +    thirdparty/libchdr/include
 +    thirdparty/libchdr/src
++    thirdparty/micro-flac/include
  )
  
  # Add source files
-@@ -42,7 +57,15 @@ file(GLOB_RECURSE MY_SOURCES
+@@ -42,7 +60,37 @@ file(GLOB_RECURSE MY_SOURCES
      "utils/*.cpp"
  )
  
@@ -43,7 +46,29 @@ index 8e7d0fe..b748fb3 100644
 +    "thirdparty/libchdr/deps/zstd-1.5.7/zstddeclib.c"
 +)
 +
-+target_sources(app PRIVATE ${MY_SOURCES} ${LIBCHDR_SOURCES})
++# libchdr_flac.c is the dr_flac backend; exactly one backend is compiled, so
++# it goes when micro-flac comes in.
++list(REMOVE_ITEM LIBCHDR_SOURCES
++    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libchdr/src/libchdr_flac.c")
++
++set(LIBCHDR_MICROFLAC_SOURCES
++    "thirdparty/libchdr/src/libchdr_flac_microflac.cpp"
++    "thirdparty/micro-flac/src/flac_decoder.cpp"
++    "thirdparty/micro-flac/src/decorrelation.cpp"
++    "thirdparty/micro-flac/src/frame_header.cpp"
++    "thirdparty/micro-flac/src/pcm_packing.cpp"
++    "thirdparty/micro-flac/src/crc.cpp"
++    "thirdparty/micro-flac/src/lpc.cpp"
++)
++
++# -fno-exceptions/-fno-rtti keep libstdc++'s exception and RTTI machinery out
++# of a bare-metal link, -fno-threadsafe-statics drops the __cxa_guard_*
++# dependency, and -fno-use-cxa-atexit is what ESP-IDF does here - newlib does
++# provide __cxa_atexit, so it links either way.
++set_source_files_properties(${LIBCHDR_MICROFLAC_SOURCES} PROPERTIES
++    COMPILE_OPTIONS "-fno-exceptions;-fno-rtti;-fno-threadsafe-statics;-fno-use-cxa-atexit")
++
++target_sources(app PRIVATE ${MY_SOURCES} ${LIBCHDR_SOURCES} ${LIBCHDR_MICROFLAC_SOURCES})
  sdk_set_main_file(main.cpp)
  
  project(tangcore CXX)

@@ -36,15 +36,39 @@ if(NOT DEFINED SD_BAUD_HZ)
 endif()
 
 
-# FLAC backend, mirroring libchdr's own CHDR_FLAC_BACKEND option. dr_flac is
-# the default; microflac needs CHDR_MICROFLAC_SOURCE_DIR pointing at a checkout.
+# FLAC backend. micro-flac is the default here, unlike libchdr itself: it is
+# measurably faster on every board this was tried on (1.198x on a CD-FLAC hunk
+# with I/O excluded on an ESP32-S3, 1.12-1.14x on two real discs here), its
+# peak heap is lower on most images, and its worst-case largest-free-block is
+# better - and an MCU integrator is already cloning an SDK and a toolchain, so
+# one more pinned checkout costs them nothing. libchdr's own default stays
+# dr_flac, because a desktop consumer vendoring src/ must not have to fetch
+# anything.
+#
+# Set CHDR_FLAC_BACKEND=drflac to go back, e.g. if Apache-2.0 does not suit
+# (micro-flac is Apache-2.0; libchdr stays BSD-3 because this is fetched, never
+# vendored).
 if(NOT DEFINED CHDR_FLAC_BACKEND)
-	set(CHDR_FLAC_BACKEND drflac)
+	set(CHDR_FLAC_BACKEND microflac)
 endif()
+set(CHDR_MICROFLAC_GIT_TAG "ffbe8a9ba5e78c16e535a4695a8b2418b0c091ee"
+	CACHE STRING "micro-flac commit to fetch when no local checkout is given")
 if(CHDR_FLAC_BACKEND STREQUAL "microflac")
 	enable_language(CXX)
 	if(NOT CHDR_MICROFLAC_SOURCE_DIR)
-		message(FATAL_ERROR "CHDR_FLAC_BACKEND=microflac needs CHDR_MICROFLAC_SOURCE_DIR")
+		# Same shape as libchdr's own root CMakeLists: pinned SHA, because the
+		# backend compiles against micro-flac's internals.
+		include(FetchContent)
+		# SOURCE_SUBDIR names a directory that does not exist on purpose:
+		# it downloads the sources without running micro-flac's own
+		# CMakeLists, whose targets would otherwise be configured for the
+		# host and joined to this cross build.
+		FetchContent_Declare(microflac
+			GIT_REPOSITORY https://github.com/esphome-libs/micro-flac.git
+			GIT_TAG ${CHDR_MICROFLAC_GIT_TAG}
+			SOURCE_SUBDIR chdr-sources-only)
+		FetchContent_MakeAvailable(microflac)
+		set(CHDR_MICROFLAC_SOURCE_DIR "${microflac_SOURCE_DIR}")
 	endif()
 	set(CHDR_FLAC_SRC
 		${LIBCHDR_ROOT}/src/libchdr_flac_microflac.cpp

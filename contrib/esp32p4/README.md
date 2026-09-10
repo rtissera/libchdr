@@ -45,14 +45,22 @@ ESP32-S3** over SPI, **1.05-1.12x on an RP2350** with 32KB the knee there. The
 P4's own number has not been taken. Set `CHD_ESP_VFS_CACHE_BUDGET` to 0 to turn
 it off.
 
-**micro-flac** (`CHDR_FLAC_BACKEND=microflac`, with
-`CHDR_MICROFLAC_SOURCE_DIR` pointing at a checkout) decodes FLAC through
-[micro-flac](https://github.com/esphome-libs/micro-flac) instead of dr_flac,
-byte-identically. On an ESP32-S3 with I/O excluded: **1.198x** on a CD-FLAC
-hunk, **1.233x** on raw FLAC. Across eleven real discs: **1.072x** overall,
-1.21x where the image is FLAC-heavy, **0.988x** on one profile where FLAC
-barely appears. It is C++ and an Apache-2.0 dependency fetched at build time,
-so it stays opt-in.
+**micro-flac is the default backend here**, unlike libchdr itself. The
+component fetches it at a pinned commit when `CHDR_MICROFLAC_SOURCE_DIR` is not
+given - point that at your own checkout, or at a managed component under
+`managed_components/esphome__micro-flac`, if you would rather not fetch.
+`CHDR_FLAC_BACKEND=drflac` goes back to dr_flac.
+
+Output is byte-identical either way. On an ESP32-S3 with I/O excluded:
+**1.198x** on a CD-FLAC hunk, **1.233x** on raw FLAC. Across eleven real discs:
+**1.072x** overall, 1.21x where the image is FLAC-heavy, **0.988x** on one
+profile where FLAC barely appears. Peak heap is lower than dr_flac's on most
+images.
+
+libchdr's own default stays dr_flac: a desktop consumer vendoring `src/` must
+not have to fetch anything, and micro-flac is C++ and Apache-2.0. An MCU
+integrator is already cloning an SDK and a toolchain, so one more pinned
+checkout costs nothing - hence the different default on this side.
 
 An earlier revision of this file quoted 1.41x for the P4. That predates the
 STREAMINFO block-size fix, which removed an oversized decoded-sample buffer

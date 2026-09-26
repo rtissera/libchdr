@@ -2796,6 +2796,7 @@ static chd_error header_read(chd_file *chd)
 	};
 
 	uint8_t rawheader[CHD_MAX_HEADER_SIZE];
+	chd_header *header;
 
 	/* punt if NULL */
 	if (chd == NULL)
@@ -2814,7 +2815,7 @@ static chd_error header_read(chd_file *chd)
 		return CHDERR_INVALID_DATA;
 
 	/* extract the direct data */
-	chd_header *header = &chd->header;
+	header = &chd->header;
 	memset(header, 0, sizeof(*header));
 	header->length  = get_bigendian_uint32_t(&rawheader[8]);
 	header->version = get_bigendian_uint32_t(&rawheader[12]);

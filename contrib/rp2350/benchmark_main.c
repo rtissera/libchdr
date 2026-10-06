@@ -41,6 +41,14 @@
 #define BENCH_CACHE_BUDGET (32 * 1024)
 #endif
 
+/* Build a FatFs cluster link map on every open (needs FF_USE_FASTSEEK). Without
+ * one, every backward f_lseek walks the FAT chain from the file's first
+ * cluster, and every COMPRESSION_SELF hunk is a backward seek. Set 0 to measure
+ * what the map buys. */
+#ifndef BENCH_LINKMAP
+#define BENCH_LINKMAP 1
+#endif
+
 /* ---- files under test; missing entries are skipped, not fatal ---- */
 static const char *const g_files[] = {
     "0:/roms/pcenginecd/Insanity (USA) (Unl).cue.chd",
@@ -127,6 +135,35 @@ static const char *basename_of(const char *p)
     return s ? s + 1 : p;
 }
 
+#if FF_USE_FASTSEEK
+#define BENCH_DROP_MAP(f) ((f)->cltbl = NULL)
+#else
+#define BENCH_DROP_MAP(f) ((void)(f))
+#endif
+
+#if BENCH_LINKMAP && FF_USE_FASTSEEK
+/* Same sizing as contrib/tangcore-bl616/chd/chd_fatfs.c: start small, grow to
+ * what FatFs reports it needs, give up past a cap and run without. Returns
+ * the table's size in words, 0 if there is none. */
+static DWORD *bench_map_clusters(FIL *fil)
+{
+    DWORD *clmt = malloc(sizeof(DWORD) * 16);
+    FRESULT fr;
+    if (!clmt) return NULL;
+    clmt[0] = 16;
+    fil->cltbl = clmt;
+    fr = f_lseek(fil, CREATE_LINKMAP);
+    if (fr == FR_NOT_ENOUGH_CORE && clmt[0] <= 1024) {
+        DWORD need = clmt[0];
+        DWORD *grown = realloc(clmt, sizeof(DWORD) * need);
+        if (grown) { clmt = grown; clmt[0] = need; fil->cltbl = clmt; fr = f_lseek(fil, CREATE_LINKMAP); }
+    }
+    if (fr != FR_OK) { fil->cltbl = NULL; free(clmt); clmt = NULL; }
+    f_lseek(fil, 0);
+    return clmt;
+}
+#endif
+
 static int run_one(const char *path)
 {
     sdfile sf;
@@ -138,6 +175,11 @@ static int run_one(const char *path)
         printf("%-34s SKIP (not on card)\n", basename_of(path));
         return 0;
     }
+#if BENCH_LINKMAP && FF_USE_FASTSEEK
+    DWORD *clmt = bench_map_clusters(&sf.fil);
+#else
+    void *clmt = NULL;
+#endif
 
     g_base = heap_used();
     g_peak = 0;
@@ -145,7 +187,7 @@ static int run_one(const char *path)
     err = chd_open_core_file_callbacks(&sd_callbacks, &sf, CHD_OPEN_READ, NULL, &chd);
     if (err != CHDERR_NONE) {
         printf("%-34s OPEN FAILED: %s\n", basename_of(path), chd_error_string(err));
-        f_close(&sf.fil);
+        BENCH_DROP_MAP(&sf.fil); f_close(&sf.fil); free(clmt);
         return 0;
     }
 #if BENCH_CACHE_BUDGET
@@ -170,7 +212,7 @@ static int run_one(const char *path)
     unsigned char *buf = malloc(h->hunkbytes);
     if (!buf) {
         printf("%-34s hunk buffer alloc failed (%u B)\n", basename_of(path), h->hunkbytes);
-        chd_close(chd); f_close(&sf.fil);
+        chd_close(chd); BENCH_DROP_MAP(&sf.fil); f_close(&sf.fil); free(clmt);
         return 0;
     }
 
@@ -202,7 +244,9 @@ static int run_one(const char *path)
 
     free(buf);
     chd_close(chd);
+    BENCH_DROP_MAP(&sf.fil);
     f_close(&sf.fil);
+    free(clmt);
 
     if (i != n) return 0;
 

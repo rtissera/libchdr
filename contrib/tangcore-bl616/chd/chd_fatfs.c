@@ -8,7 +8,8 @@
 
 #include "chd_fatfs.h"
 
-#include <stdio.h> /* SEEK_SET / SEEK_CUR / SEEK_END */
+#include <stdio.h>  /* SEEK_SET / SEEK_CUR / SEEK_END */
+#include <stdlib.h> /* malloc / realloc / free */
 
 static uint64_t chd_fatfs_fsize(void *argp)
 {
@@ -31,10 +32,22 @@ static size_t chd_fatfs_fread(void *ptr, size_t size, size_t nmemb, void *argp)
 	return (size_t)(br / size);
 }
 
+/* libchdr calls this once, from chd_close() or from a failed open; the link
+ * map goes with the file. */
 static int chd_fatfs_fclose(void *argp)
 {
 	FIL *fil = (FIL *)argp;
-	return (f_close(fil) == FR_OK) ? 0 : -1;
+	FRESULT fr;
+#if FF_USE_FASTSEEK
+	DWORD *clmt = fil->cltbl;
+
+	fil->cltbl = NULL;
+#endif
+	fr = f_close(fil);
+#if FF_USE_FASTSEEK
+	free(clmt);
+#endif
+	return (fr == FR_OK) ? 0 : -1;
 }
 
 static int chd_fatfs_fseek(void *argp, int64_t offset, int whence)
@@ -61,6 +74,64 @@ static int chd_fatfs_fseek(void *argp, int64_t offset, int whence)
 	return (f_lseek(fil, abs_offset) == FR_OK) ? 0 : -1;
 }
 
+#if FF_USE_FASTSEEK
+/* Without a cluster link map, every backward f_lseek walks the FAT chain from
+ * the file's first cluster again - and every COMPRESSION_SELF hunk is a
+ * backward seek, to an earlier hunk the file references instead of storing
+ * twice. The cost grows with how far into the file the reader is, so a short
+ * test near the start never shows it; on an ESP32-P4 a 29% self-referenced
+ * image did not finish in 47 minutes until the map was built. FF_USE_FASTSEEK
+ * provides the map, but f_open does not build one - the caller has to.
+ *
+ * The table needs two words per fragment plus one. A freshly written card
+ * holds each file as one fragment, so start small and grow only to what
+ * FatFs reports it needs, capped so a pathologically fragmented file costs at
+ * most CHD_FATFS_CLMT_MAX words and otherwise just runs without the map. */
+#ifndef CHD_FATFS_CLMT_FIRST
+#define CHD_FATFS_CLMT_FIRST 16
+#endif
+#ifndef CHD_FATFS_CLMT_MAX
+#define CHD_FATFS_CLMT_MAX 1024
+#endif
+
+static void chd_fatfs_map_clusters(FIL *fil)
+{
+	DWORD *clmt = (DWORD *)malloc(sizeof(DWORD) * CHD_FATFS_CLMT_FIRST);
+	FRESULT fr;
+
+	if (clmt == NULL)
+		return;
+
+	clmt[0] = CHD_FATFS_CLMT_FIRST;
+	fil->cltbl = clmt;
+	fr = f_lseek(fil, CREATE_LINKMAP);
+
+	/* on FR_NOT_ENOUGH_CORE, FatFs leaves the size it needs in clmt[0] */
+	if (fr == FR_NOT_ENOUGH_CORE && clmt[0] <= CHD_FATFS_CLMT_MAX)
+	{
+		DWORD need = clmt[0];
+		DWORD *grown = (DWORD *)realloc(clmt, sizeof(DWORD) * need);
+
+		if (grown != NULL)
+		{
+			clmt = grown;
+			clmt[0] = need;
+			fil->cltbl = clmt;
+			fr = f_lseek(fil, CREATE_LINKMAP);
+		}
+	}
+
+	if (fr != FR_OK)
+	{
+		/* no map: slower backward seeks, but correct */
+		fil->cltbl = NULL;
+		free(clmt);
+	}
+
+	f_lseek(fil, 0);
+}
+#endif
+
 const core_file_callbacks chd_fatfs_callbacks = {
 	.fsize = chd_fatfs_fsize,
 	.fread = chd_fatfs_fread,
@@ -75,7 +146,13 @@ chd_error chd_fatfs_open(const char *path, FIL *fil, chd_file **chd)
 	if (f_open(fil, path, FA_READ) != FR_OK)
 		return CHDERR_FILE_NOT_FOUND;
 
-	/* on failure libchdr has already closed fil through the callback */
+#if FF_USE_FASTSEEK
+	/* before chd_open, so the header and map reads benefit too */
+	chd_fatfs_map_clusters(fil);
+#endif
+
+	/* on failure libchdr has already closed fil through the callback, which
+	 * also frees the link map */
 	err = chd_open_core_file_callbacks(&chd_fatfs_callbacks, fil, CHD_OPEN_READ, NULL, chd);
 	if (err != CHDERR_NONE)
 		return err;

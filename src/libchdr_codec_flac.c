@@ -55,6 +55,8 @@ chd_error flac_codec_decompress(void *codec, const uint8_t *src, uint32_t comple
 	else
 		return CHDERR_DECOMPRESSION_ERROR;
 
+	if (complen == 0)  /* complen - 1 below */
+		return CHDERR_DECOMPRESSION_ERROR;
 	if (!flac_decoder_reset(&flac->decoder, 44100, 2, flac_codec_blocksize(destlen), src + 1, complen - 1))
 		return flac->decoder.alloc_failed ? CHDERR_OUT_OF_MEMORY : CHDERR_DECOMPRESSION_ERROR;
 	if (!flac_decoder_decode_interleaved(&flac->decoder, (int16_t *)(dest), destlen/4, swap_endian))

@@ -3276,6 +3276,8 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 			/* mini-compressed data */
 			case V34_MAP_ENTRY_TYPE_MINI:
+				if (chd->header.hunkbytes < 8)  /* the 8-byte pattern must fit */
+					return CHDERR_DECOMPRESSION_ERROR;
 				put_bigendian_uint64_t(&dest[0], entry->offset);
 				for (bytes = 8; bytes < chd->header.hunkbytes; bytes++)
 					dest[bytes] = dest[bytes - 8];
@@ -3288,10 +3290,15 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 
 			/* self-referenced data */
 			case V34_MAP_ENTRY_TYPE_SELF_HUNK:
+				/* only an earlier hunk: a crafted map would recurse forever */
+				if (entry->offset >= hunknum)
+					return CHDERR_DECOMPRESSION_ERROR;
 				return hunk_read_into_memory(chd, entry->offset, dest);
 
 			/* parent-referenced data */
 			case V34_MAP_ENTRY_TYPE_PARENT_HUNK:
+				if (chd->parent == NULL)  /* as the v5 path checks */
+					return CHDERR_REQUIRES_PARENT;
 				err = hunk_read_into_memory(chd->parent, entry->offset, dest);
 				if (err != CHDERR_NONE)
 					return err;
@@ -3426,6 +3433,10 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 			{
 				uint32_t target = (uint32_t)blockoffs;
 
+				/* only an earlier hunk: a crafted map would recurse forever */
+				if (target >= hunknum)
+					return CHDERR_DECOMPRESSION_ERROR;
+
 				/* the whole point of the cache: a self-reference otherwise
 				 * costs a backward seek plus a full re-decode of a hunk that
 				 * was very often decoded moments ago */
@@ -3474,6 +3485,9 @@ static chd_error hunk_read_into_memory(chd_file *chd, uint32_t hunknum, uint8_t 
 				}
 				break;
 			}
+
+			default:  /* the map decodes to types 0-6 only */
+				return CHDERR_DECOMPRESSION_ERROR;
 		}
 		return CHDERR_NONE;
 	}

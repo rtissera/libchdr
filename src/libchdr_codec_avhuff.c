@@ -244,6 +244,8 @@ static chd_error decode_audio(avhuff_codec_data *avhuff, uint32_t channels,
 			{
 				/* raw big-endian s16 deltas */
 				const uint8_t *cur = source;
+				if (size < 2u * samples)  /* read only this channel's bytes */
+					return CHDERR_INVALID_DATA;
 				for (sampnum = 0; sampnum < samples; sampnum++)
 				{
 					int16_t delta = get_s16be(cur);
@@ -374,9 +376,9 @@ chd_error avhuff_codec_decompress(void *codec, const uint8_t *src, uint32_t comp
 	uint8_t *audiostart[16];
 	uint32_t videostride;
 	uint32_t chnum;
-	uint32_t header_bytes;
-	uint32_t payload_bytes;
-	uint32_t written;
+	uint64_t header_bytes;   /* 64-bit, 2*w*h wraps 32 bits */
+	uint64_t payload_bytes;
+	uint64_t written;
 
 	if (complen < 8)
 		return CHDERR_INVALID_DATA;
@@ -392,7 +394,7 @@ chd_error avhuff_codec_decompress(void *codec, const uint8_t *src, uint32_t comp
 	if (complen < 10u + 2u * channels)
 		return CHDERR_INVALID_DATA;
 
-	totalsize = 10u + 2u * channels;
+	totalsize = 10u + 2u * channels + metasize;  /* the metadata is copied from src too */
 	treesize  = get_u16be(&src[8]);
 	if (treesize != 0xffff)
 		totalsize += treesize;
@@ -403,8 +405,8 @@ chd_error avhuff_codec_decompress(void *codec, const uint8_t *src, uint32_t comp
 
 	/* required output size: 12-byte 'chav' header + metadata + audio + video */
 	header_bytes  = 12u;
-	payload_bytes = metasize + 2u * channels * samples + 2u * width * height;
-	if ((uint64_t)header_bytes + (uint64_t)payload_bytes > (uint64_t)destlen)
+	payload_bytes = (uint64_t)metasize + (uint64_t)2 * channels * samples + (uint64_t)2 * width * height;
+	if (header_bytes + payload_bytes > (uint64_t)destlen)
 		return CHDERR_DECOMPRESSION_ERROR;
 
 	/* write destination 'chav' header */

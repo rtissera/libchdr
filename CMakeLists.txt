@@ -216,6 +216,7 @@ endif()
 set(CHDR_SOURCES
   src/libchdr_bitstream.c
   src/libchdr_cdrom.c
+  src/libchdr_cdrom_toc.c
   src/libchdr_chd.c
   src/libchdr_codec_avhuff.c
   src/libchdr_codec_cdfl.c

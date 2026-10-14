@@ -23,6 +23,10 @@ instead of a dated snapshot.
 - `chd_read_header_core_file_callbacks` public API.
 - pkg-config file (`libchdr.pc`) installed alongside the library.
 - Unity-build script (`unity.c`).
+- CD sector access by LBA: `chd_cd_open` parses the track metadata
+  into a TOC (`chd_cd_get_toc`), and `chd_cd_read_sector` reads user
+  data, raw sectors or subcode by LBA, handling track padding and
+  stored or unstored pregaps (#155).
 
 ### Changed
 
@@ -64,6 +68,10 @@ instead of a dated snapshot.
 - `fseek` errors are now propagated as `CHDERR_READ_ERROR`.
 - Only reads as much header data as the declared header length.
 - Various memory and overflow bugs in hunk decoding (#132).
+- CD track metadata gains bounded `CDROM_TRACK_METADATA_SCANF`,
+  `CDROM_TRACK_METADATA2_SCANF` and `GDROM_TRACK_METADATA_SCANF`
+  formats for `sscanf`, with `CD_METADATA_STRING_SIZE`; the
+  unbounded `*_FORMAT` macros overflow on crafted metadata (#165).
 
 ### Removed
 

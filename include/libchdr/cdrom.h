@@ -58,6 +58,79 @@ enum
 #define CD_FLAG_GDROMLE 0x00000002  /* legacy GD-ROM, with little-endian CDDA data */
 
 /***************************************************************************
+    SECTOR ACCESS BY LBA
+
+    A CD CHD stores tracks back to back as 2448-byte frames (2352 sector
+    bytes, 96 subcode bytes), each track padded to CD_TRACK_PADDING frames,
+    and the layout lives in per-track metadata. chd_cd_open() parses that
+    metadata into a TOC and chd_cd_read_sector() reads by LBA, so callers no
+    longer redo the hunk and padding arithmetic themselves (#155).
+
+    LBAs follow MAME's logical addressing: LBA 0 is the start of track 1,
+    and pregaps and postgaps take up LBAs whether or not their sectors are
+    stored. Use msf_to_lba() / lba_to_msf() below to address by MSF.
+***************************************************************************/
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct _chd_cd_track chd_cd_track;
+struct _chd_cd_track
+{
+	uint32_t	number;			/* track number, 1-based */
+	uint32_t	type;			/* CD_TRACK_* */
+	uint32_t	subtype;		/* CD_SUB_* */
+	uint32_t	datasize;		/* sector bytes stored per frame */
+	uint32_t	subsize;		/* subcode bytes stored per frame */
+	uint32_t	frames;			/* frames stored, pregap included when pgdatasize != 0 */
+	uint32_t	pregap;			/* pregap frames, INDEX 00 to INDEX 01 */
+	uint32_t	pgdatasize;		/* non-zero when the pregap is stored in the CHD */
+	uint32_t	postgap;		/* postgap frames, never stored */
+	uint32_t	logframeofs;	/* LBA of INDEX 01 */
+	uint32_t	chdframeofs;	/* first frame of the track within the CHD */
+};
+
+typedef struct _chd_cd_toc chd_cd_toc;
+struct _chd_cd_toc
+{
+	uint32_t		numtracks;
+	uint32_t		flags;		/* CD_FLAG_* */
+	uint32_t		leadout;	/* first LBA past the last track */
+	chd_cd_track	tracks[CD_MAX_TRACKS];
+};
+
+/* what chd_cd_read_sector() returns, and how many bytes it writes */
+enum
+{
+	CHD_CD_READ_DATA = 0,	/* 2048 bytes of user data; data tracks only */
+	CHD_CD_READ_RAW,		/* CD_MAX_SECTOR_DATA bytes as a .bin would hold them:
+							 * audio little-endian, a cooked track's datasize
+							 * bytes followed by zeros */
+	CHD_CD_READ_SUBCODE		/* CD_MAX_SUBCODE_DATA bytes, zeros if none stored */
+};
+
+typedef struct _chd_cd chd_cd;
+
+/* Parse the track metadata of an open CD CHD. The handle borrows `chd`,
+ * which must outlive it. CHDERR_INVALID_METADATA when the track metadata is
+ * missing or inconsistent. */
+CHD_EXPORT chd_error chd_cd_open(chd_file *chd, chd_cd **cd);
+CHD_EXPORT void chd_cd_close(chd_cd *cd);
+CHD_EXPORT const chd_cd_toc *chd_cd_get_toc(const chd_cd *cd);
+
+/* Read one sector. Sectors of a pregap or postgap that the CHD does not
+ * store read as zeros. The last decoded hunk is kept, so reading the frames
+ * of a hunk in a row decodes it once. CHDERR_HUNK_OUT_OF_RANGE past the
+ * leadout; CHDERR_INVALID_PARAMETER for CHD_CD_READ_DATA on an audio or
+ * Mode 2 Form 2 track. */
+CHD_EXPORT chd_error chd_cd_read_sector(chd_cd *cd, uint32_t lba, void *buffer, uint32_t what);
+
+#ifdef __cplusplus
+}
+#endif
+
+/***************************************************************************
     FUNCTION PROTOTYPES
 ***************************************************************************/
 

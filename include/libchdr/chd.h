@@ -247,6 +247,14 @@ extern "C" {
 #define GDROM_OLD_METADATA_TAG		CHD_MAKE_TAG('C','H','G','T')
 #define GDROM_TRACK_METADATA_TAG	CHD_MAKE_TAG('C', 'H', 'G', 'D')
 #define GDROM_TRACK_METADATA_FORMAT	"TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
+/* Bounded variants of the three formats above, for sscanf(). The %s fields
+ * would overflow on a crafted CHD; every string target here must be
+ * char[CD_METADATA_STRING_SIZE]. The *_FORMAT macros stay unbounded on
+ * purpose: in printf a width pads rather than limits (#165). */
+#define CD_METADATA_STRING_SIZE		16
+#define CDROM_TRACK_METADATA_SCANF	"TRACK:%d TYPE:%15s SUBTYPE:%15s FRAMES:%d"
+#define CDROM_TRACK_METADATA2_SCANF	"TRACK:%d TYPE:%15s SUBTYPE:%15s FRAMES:%d PREGAP:%d PGTYPE:%15s PGSUB:%15s POSTGAP:%d"
+#define GDROM_TRACK_METADATA_SCANF	"TRACK:%d TYPE:%15s SUBTYPE:%15s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%15s PGSUB:%15s POSTGAP:%d"
 
 /* standard A/V metadata */
 #define AV_METADATA_TAG				CHD_MAKE_TAG('A','V','A','V')

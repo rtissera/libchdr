@@ -68,6 +68,12 @@ target_link_libraries(chdr-open-ownership PRIVATE chdr-static)
 chdr_test_defines(chdr-open-ownership)
 add_test(NAME open-ownership COMMAND chdr-open-ownership)
 
+# The CD track metadata *_SCANF formats bound every string field (#165).
+add_executable(chdr-metadata-scanf metadata_scanf.c)
+target_link_libraries(chdr-metadata-scanf PRIVATE chdr-static)
+chdr_test_defines(chdr-metadata-scanf)
+add_test(NAME metadata-scanf COMMAND chdr-metadata-scanf)
+
 # CHDs with a parent: seeds/ has none, and cannot (a child needs its parent, and
 # the workflows there open every file standalone), so COMPRESSION_PARENT would
 # otherwise go untested - including through the in-place CD spread, where a

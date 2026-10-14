@@ -23,6 +23,10 @@ instead of a dated snapshot.
 - `chd_read_header_core_file_callbacks` public API.
 - pkg-config file (`libchdr.pc`) installed alongside the library.
 - Unity-build script (`unity.c`).
+- CD sector access by LBA: `chd_cd_open` parses the track metadata
+  into a TOC (`chd_cd_get_toc`), and `chd_cd_read_sector` reads user
+  data, raw sectors or subcode by LBA, handling track padding and
+  stored or unstored pregaps (#155).
 
 ### Changed
 

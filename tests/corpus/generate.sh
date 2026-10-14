@@ -143,6 +143,35 @@ if [ -f "$PARENT/base.chd" ]; then
     fi
 fi
 
+# ---- multi-track CD for tests/cd_toc.c --------------------------------------
+#
+# One BIN, three tracks, each a different way of placing a track in a CHD:
+#
+#   01  MODE1/2352, 300 frames - a multiple of CD_TRACK_PADDING
+#   02  AUDIO, INDEX 00 150 frames before INDEX 01: a pregap stored in the
+#       file (PGTYPE:VAUDIO), 375 frames in all, so padded by one
+#   03  AUDIO, PREGAP 00:02:00: 150 frames of pregap that are not stored,
+#       then 101 frames, padded by three
+#
+# The BIN is kept next to the CHD: the test reads every LBA back and compares
+# it with the bytes the cue sheet puts there. Outside seeds/ because it is
+# not a CHD, and the workflows walking seeds/ open every file there.
+CD="$(cd "$(dirname "$0")" && pwd)/cd"
+mkdir -p "$CD"
+dd if=/dev/urandom of="$CD/multitrack.bin" bs=2352 count=776 status=none
+cat > "$CD/multitrack.cue" <<EOF
+FILE "multitrack.bin" BINARY
+  TRACK 01 MODE1/2352
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    INDEX 00 00:04:00
+    INDEX 01 00:06:00
+  TRACK 03 AUDIO
+    PREGAP 00:02:00
+    INDEX 01 00:09:00
+EOF
+chdman createcd -f -i "$CD/multitrack.cue" -o "$CD/multitrack.chd" >/dev/null 2>&1 || true
+
 # CHDv3/v4 fixtures for tests/legacy_decode.c. chdman only writes v5, so these
 # come from mklegacy.py, which builds the older layouts directly.
 LEGACY="$(cd "$(dirname "$0")" && pwd)/legacy"

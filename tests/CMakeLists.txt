@@ -74,6 +74,14 @@ target_link_libraries(chdr-metadata-scanf PRIVATE chdr-static)
 chdr_test_defines(chdr-metadata-scanf)
 add_test(NAME metadata-scanf COMMAND chdr-metadata-scanf)
 
+# Sector reads by LBA over a multi-track CD (#155). Its own directory, as the
+# fixture keeps the BIN it was built from to compare against.
+add_executable(chdr-cd-toc cd_toc.c)
+target_link_libraries(chdr-cd-toc PRIVATE chdr-static)
+chdr_test_defines(chdr-cd-toc)
+add_test(NAME cd-toc
+         COMMAND chdr-cd-toc "${CMAKE_CURRENT_SOURCE_DIR}/corpus/cd")
+
 # CHDs with a parent: seeds/ has none, and cannot (a child needs its parent, and
 # the workflows there open every file standalone), so COMPRESSION_PARENT would
 # otherwise go untested - including through the in-place CD spread, where a

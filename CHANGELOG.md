@@ -64,6 +64,10 @@ instead of a dated snapshot.
 - `fseek` errors are now propagated as `CHDERR_READ_ERROR`.
 - Only reads as much header data as the declared header length.
 - Various memory and overflow bugs in hunk decoding (#132).
+- CD track metadata gains bounded `CDROM_TRACK_METADATA_SCANF`,
+  `CDROM_TRACK_METADATA2_SCANF` and `GDROM_TRACK_METADATA_SCANF`
+  formats for `sscanf`, with `CD_METADATA_STRING_SIZE`; the
+  unbounded `*_FORMAT` macros overflow on crafted metadata (#165).
 
 ### Removed
 

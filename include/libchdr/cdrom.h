@@ -89,6 +89,7 @@ struct _chd_cd_track
 	uint32_t	postgap;		/* postgap frames, never stored */
 	uint32_t	logframeofs;	/* LBA of INDEX 01 */
 	uint32_t	chdframeofs;	/* first frame of the track within the CHD */
+	char		isrc[13];		/* from an embedded cue sheet, "" if none */
 };
 
 typedef struct _chd_cd_toc chd_cd_toc;
@@ -97,6 +98,7 @@ struct _chd_cd_toc
 	uint32_t		numtracks;
 	uint32_t		flags;		/* CD_FLAG_* */
 	uint32_t		leadout;	/* first LBA past the last track */
+	char			catalog[14];	/* from an embedded cue sheet, "" if none */
 	chd_cd_track	tracks[CD_MAX_TRACKS];
 };
 
@@ -125,6 +127,13 @@ CHD_EXPORT const chd_cd_toc *chd_cd_get_toc(const chd_cd *cd);
  * leadout; CHDERR_INVALID_PARAMETER for CHD_CD_READ_DATA on an audio or
  * Mode 2 Form 2 track. */
 CHD_EXPORT chd_error chd_cd_read_sector(chd_cd *cd, uint32_t lba, void *buffer, uint32_t what);
+
+/* LBA of INDEX `index` (0-99) of track `track` (1-based). INDEX 01 is always
+ * known, INDEX 00 when the track has a pregap, and any other INDEX when an
+ * embedded cue sheet (CDROM_CUESHEET_METADATA_TAG) lists it; otherwise
+ * CHDERR_METADATA_NOT_FOUND. A cue sheet whose tracks do not match the
+ * CHD's is ignored as a whole, catalog and ISRCs included. */
+CHD_EXPORT chd_error chd_cd_get_index(const chd_cd *cd, uint32_t track, uint32_t index, uint32_t *lba);
 
 #ifdef __cplusplus
 }

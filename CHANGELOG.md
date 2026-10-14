@@ -27,6 +27,11 @@ instead of a dated snapshot.
   into a TOC (`chd_cd_get_toc`), and `chd_cd_read_sector` reads user
   data, raw sectors or subcode by LBA, handling track padding and
   stored or unstored pregaps (#155).
+- Embedded cue sheets: a CD CHD may carry its cue sheet as `CUES`
+  metadata (`CDROM_CUESHEET_METADATA_TAG`), which keeps the INDEX
+  02+, CATALOG and ISRC entries CHDv5 track metadata drops.
+  `chd_cd_open` reads it into the TOC and `chd_cd_get_index` returns
+  any INDEX by track (#164).
 
 ### Changed
 

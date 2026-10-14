@@ -172,6 +172,33 @@ FILE "multitrack.bin" BINARY
 EOF
 chdman createcd -f -i "$CD/multitrack.cue" -o "$CD/multitrack.chd" >/dev/null 2>&1 || true
 
+# The same disc with its cue sheet embedded as CUES metadata, carrying what
+# track metadata cannot: CATALOG, ISRC and an INDEX 02. addmeta only writes
+# to an uncompressed CHD, hence the copy. cuesheet_bad.chd embeds a cue that
+# lists two tracks for a three-track disc, which must be ignored.
+cat > "$CD/cuesheet.cue" <<EOF
+CATALOG 0123456789012
+FILE "multitrack.bin" BINARY
+  TRACK 01 MODE1/2352
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    ISRC USRC17607839
+    INDEX 00 00:04:00
+    INDEX 01 00:06:00
+    INDEX 02 00:07:00
+  TRACK 03 AUDIO
+    PREGAP 00:02:00
+    INDEX 01 00:09:00
+EOF
+head -n 9 "$CD/cuesheet.cue" > "$TMP/bad.cue"
+embed_cue () {
+    chdman createcd -f -c none -i "$CD/cuesheet.cue" -o "$TMP/cue.chd" >/dev/null 2>&1 &&
+    chdman addmeta -i "$TMP/cue.chd" --tag CUES --valuefile "$1" >/dev/null 2>&1 &&
+    chdman copy -f -i "$TMP/cue.chd" -o "$2" >/dev/null 2>&1 || true
+}
+embed_cue "$CD/cuesheet.cue" "$CD/cuesheet.chd"
+embed_cue "$TMP/bad.cue" "$CD/cuesheet_bad.chd"
+
 # CHDv3/v4 fixtures for tests/legacy_decode.c. chdman only writes v5, so these
 # come from mklegacy.py, which builds the older layouts directly.
 LEGACY="$(cd "$(dirname "$0")" && pwd)/legacy"

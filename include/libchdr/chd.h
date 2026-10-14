@@ -247,6 +247,16 @@ extern "C" {
 #define GDROM_OLD_METADATA_TAG		CHD_MAKE_TAG('C','H','G','T')
 #define GDROM_TRACK_METADATA_TAG	CHD_MAKE_TAG('C', 'H', 'G', 'D')
 #define GDROM_TRACK_METADATA_FORMAT	"TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
+
+/* The cue sheet a CD CHD was made from, as plain text. A libchdr extension,
+ * not written by chdman createcd: CHDv5 track metadata has no room for
+ * INDEX 02+, CATALOG or ISRC, and the cue sheet keeps them (#164). Add it to
+ * an uncompressed CHD, then compress - chdman addmeta cannot write to a
+ * compressed one:
+ *   chdman createcd -c none -i game.cue -o tmp.chd
+ *   chdman addmeta -i tmp.chd --tag CUES --valuefile game.cue
+ *   chdman copy -i tmp.chd -o game.chd */
+#define CDROM_CUESHEET_METADATA_TAG	CHD_MAKE_TAG('C','U','E','S')
 /* Bounded variants of the three formats above, for sscanf(). The %s fields
  * would overflow on a crafted CHD; every string target here must be
  * char[CD_METADATA_STRING_SIZE]. The *_FORMAT macros stay unbounded on

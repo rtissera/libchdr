@@ -11,6 +11,14 @@
 
 #include "../include/libchdr/cdrom.h"
 
+/* one INDEX line of an embedded cue sheet */
+struct cue_index
+{
+	uint8_t		track;
+	uint8_t		index;
+	int32_t		ofs;			/* frames from the track's INDEX 01 */
+};
+
 struct _chd_cd
 {
 	chd_file *	chd;
@@ -18,7 +26,15 @@ struct _chd_cd
 	uint32_t	framesperhunk;
 	uint32_t	cachedhunk;		/* hunk held in `hunk`, ~0 = none */
 	uint8_t *	hunk;
+	struct cue_index *indices;	/* NULL without an embedded cue sheet */
+	uint32_t	numindices;
 };
+
+/* a cue sheet is text a few hundred bytes long; anything far larger is not
+ * one */
+#define CUESHEET_MAX_BYTES	65536
+/* the shortest INDEX line, "INDEX 01 00:00:00", is 17 bytes */
+#define CUESHEET_MAX_INDICES(len)	((len) / 17 + 1)
 
 static const struct
 {
@@ -180,6 +196,109 @@ static chd_error compute_offsets(chd_cd_toc *toc)
 	return CHDERR_NONE;
 }
 
+/* Indices are kept relative to their track's INDEX 01, so they land on the
+ * CHD's own track starts whatever the cue's FILE layout: one BIN, or one per
+ * track as Redump has it. Returns 0 if the cue sheet is unusable. */
+static int parse_cuesheet_text(chd_cd *cd, char *text, uint32_t maxindices)
+{
+	chd_cd_toc *toc = &cd->toc;
+	uint32_t track = 0, first = 0, n = 0, i;
+	int32_t index1 = -1;
+	int file_since_index = 0, seen_index = 0;
+	char *line = text;
+
+	while (line != NULL)
+	{
+		char *next = strchr(line, '\n');
+		char keyword[16];
+		unsigned num, m, s, f;
+		int used = 0;
+
+		if (next != NULL)
+			*next++ = 0;
+		if (sscanf(line, " %15s %n", keyword, &used) != 1)
+		{
+			line = next;
+			continue;
+		}
+		line += used;
+
+		if (strcmp(keyword, "CATALOG") == 0)
+			sscanf(line, "%13s", toc->catalog);
+		else if (strcmp(keyword, "ISRC") == 0 && track > 0)
+			sscanf(line, "%12s", toc->tracks[track - 1].isrc);
+		else if (strcmp(keyword, "FILE") == 0)
+			file_since_index = seen_index;
+		else if (strcmp(keyword, "TRACK") == 0)
+		{
+			if (sscanf(line, "%u", &num) != 1 || num != track + 1 || num > toc->numtracks
+			    || (track > 0 && index1 < 0))
+				return 0;
+			for (i = first; i < n; i++)
+				cd->indices[i].ofs -= index1;
+			track = num;
+			first = n;
+			index1 = -1;
+			file_since_index = seen_index = 0;
+		}
+		else if (strcmp(keyword, "INDEX") == 0)
+		{
+			/* a FILE between two indices of one track puts them in
+			 * different files, and their distance is unknown */
+			if (track == 0 || file_since_index || n == maxindices
+			    || sscanf(line, "%u %u:%u:%u", &num, &m, &s, &f) != 4
+			    || num > 99 || m > 99 || s > 59 || f > 74)
+				return 0;
+			cd->indices[n].track = (uint8_t)track;
+			cd->indices[n].index = (uint8_t)num;
+			cd->indices[n].ofs = (int32_t)((m * 60 + s) * 75 + f);
+			if (num == 1)
+				index1 = cd->indices[n].ofs;
+			n++;
+			seen_index = 1;
+		}
+		line = next;
+	}
+
+	if (track != toc->numtracks || index1 < 0)
+		return 0;
+	for (i = first; i < n; i++)
+		cd->indices[i].ofs -= index1;
+	cd->numindices = n;
+	return 1;
+}
+
+/* Optional: a missing or unusable cue sheet leaves the TOC as the track
+ * metadata describes it. */
+static void parse_cuesheet(chd_cd *cd)
+{
+	uint32_t len = 0, t;
+	char dummy, *text;
+
+	if (chd_get_metadata(cd->chd, CDROM_CUESHEET_METADATA_TAG, 0, &dummy, 0, &len, NULL, NULL) != CHDERR_NONE
+	    || len == 0 || len > CUESHEET_MAX_BYTES)
+		return;
+	text = (char *)malloc(len + 1);
+	cd->indices = (struct cue_index *)malloc(CUESHEET_MAX_INDICES(len) * sizeof(*cd->indices));
+	if (text != NULL && cd->indices != NULL
+	    && chd_get_metadata(cd->chd, CDROM_CUESHEET_METADATA_TAG, 0, text, len, NULL, NULL, NULL) == CHDERR_NONE)
+	{
+		text[len] = 0;
+		if (parse_cuesheet_text(cd, text, CUESHEET_MAX_INDICES(len)))
+		{
+			free(text);
+			return;
+		}
+	}
+	free(text);
+	free(cd->indices);
+	cd->indices = NULL;
+	cd->numindices = 0;
+	cd->toc.catalog[0] = 0;
+	for (t = 0; t < cd->toc.numtracks; t++)
+		cd->toc.tracks[t].isrc[0] = 0;
+}
+
 CHD_EXPORT chd_error chd_cd_open(chd_file *chd, chd_cd **cd)
 {
 	const chd_header *header;
@@ -205,6 +324,8 @@ CHD_EXPORT chd_error chd_cd_open(chd_file *chd, chd_cd **cd)
 	if (err == CHDERR_NONE)
 		err = compute_offsets(&result->toc);
 	if (err == CHDERR_NONE)
+		parse_cuesheet(result);
+	if (err == CHDERR_NONE)
 	{
 		result->hunk = (uint8_t *)malloc(header->hunkbytes);
 		if (result->hunk == NULL)
@@ -224,12 +345,41 @@ CHD_EXPORT void chd_cd_close(chd_cd *cd)
 	if (cd == NULL)
 		return;
 	free(cd->hunk);
+	free(cd->indices);
 	free(cd);
 }
 
 CHD_EXPORT const chd_cd_toc *chd_cd_get_toc(const chd_cd *cd)
 {
 	return cd != NULL ? &cd->toc : NULL;
+}
+
+CHD_EXPORT chd_error chd_cd_get_index(const chd_cd *cd, uint32_t track, uint32_t index, uint32_t *lba)
+{
+	const chd_cd_track *t;
+	uint32_t i;
+
+	if (cd == NULL || lba == NULL || track == 0 || track > cd->toc.numtracks || index > 99)
+		return CHDERR_INVALID_PARAMETER;
+	t = &cd->toc.tracks[track - 1];
+
+	for (i = 0; i < cd->numindices; i++)
+		if (cd->indices[i].track == track && cd->indices[i].index == index)
+		{
+			int64_t value = (int64_t)t->logframeofs + cd->indices[i].ofs;
+			if (value < 0 || value > UINT32_MAX)
+				return CHDERR_INVALID_METADATA;
+			*lba = (uint32_t)value;
+			return CHDERR_NONE;
+		}
+
+	if (index == 1)
+		*lba = t->logframeofs;
+	else if (index == 0 && t->pregap > 0)
+		*lba = t->logframeofs - t->pregap;
+	else
+		return CHDERR_METADATA_NOT_FOUND;
+	return CHDERR_NONE;
 }
 
 /* where the 2048 user data bytes start in a stored sector, -1 = none */

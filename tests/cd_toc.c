@@ -6,6 +6,10 @@
  * with the bytes its cue sheet puts there, so the pregap that is stored, the
  * one that is not, and the per-track frame padding are all crossed.
  *
+ * cuesheet.chd adds the cue sheet as CUES metadata (#164): its CATALOG, ISRC
+ * and INDEX 02 must come through, and cuesheet_bad.chd's mismatched cue must
+ * be ignored as a whole.
+ *
  * Skips when the corpus is absent, as the other corpus tests do.
  */
 #include <stdio.h>
@@ -36,6 +40,56 @@ static long bin_sector(uint32_t lba)
 	if (lba < 825)
 		return -1;
 	return lba - 150;
+}
+
+static chd_cd *open_cd(const char *dir, const char *name, chd_file **chd)
+{
+	char path[1024];
+	chd_cd *cd = NULL;
+
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	if (chd_open(path, CHD_OPEN_READ, NULL, chd) != CHDERR_NONE)
+	{
+		check(0, name, 0);
+		return NULL;
+	}
+	check(chd_cd_open(*chd, &cd) == CHDERR_NONE, "chd_cd_open with a cue sheet", 0);
+	return cd;
+}
+
+static void check_cuesheet(const char *dir)
+{
+	chd_file *chd = NULL;
+	chd_cd *cd;
+	uint32_t lba = 0;
+
+	if ((cd = open_cd(dir, "cuesheet.chd", &chd)) != NULL)
+	{
+		const chd_cd_toc *toc = chd_cd_get_toc(cd);
+		check(strcmp(toc->catalog, "0123456789012") == 0, "catalog", 0);
+		check(toc->tracks[0].isrc[0] == 0 && strcmp(toc->tracks[1].isrc, "USRC17607839") == 0, "isrc", 0);
+		check(chd_cd_get_index(cd, 2, 2, &lba) == CHDERR_NONE && lba == 525, "track 2 INDEX 02", (long)lba);
+		check(chd_cd_get_index(cd, 2, 0, &lba) == CHDERR_NONE && lba == 300, "track 2 INDEX 00", (long)lba);
+		check(chd_cd_get_index(cd, 3, 1, &lba) == CHDERR_NONE && lba == 825, "track 3 INDEX 01", (long)lba);
+		check(chd_cd_get_index(cd, 3, 0, &lba) == CHDERR_NONE && lba == 675, "track 3 unstored INDEX 00", (long)lba);
+		check(chd_cd_get_index(cd, 1, 2, &lba) == CHDERR_METADATA_NOT_FOUND, "track 1 INDEX 02", 0);
+		check(chd_cd_get_index(cd, 4, 1, &lba) == CHDERR_INVALID_PARAMETER, "track past the last", 0);
+		chd_cd_close(cd);
+	}
+	if (chd != NULL)
+		chd_close(chd);
+
+	chd = NULL;
+	if ((cd = open_cd(dir, "cuesheet_bad.chd", &chd)) != NULL)
+	{
+		const chd_cd_toc *toc = chd_cd_get_toc(cd);
+		check(toc->catalog[0] == 0 && toc->tracks[1].isrc[0] == 0, "mismatched cue ignored", 0);
+		check(chd_cd_get_index(cd, 2, 2, &lba) == CHDERR_METADATA_NOT_FOUND, "mismatched cue INDEX 02", 0);
+		check(chd_cd_get_index(cd, 2, 1, &lba) == CHDERR_NONE && lba == 450, "metadata INDEX 01 still known", (long)lba);
+		chd_cd_close(cd);
+	}
+	if (chd != NULL)
+		chd_close(chd);
 }
 
 int main(int argc, char **argv)
@@ -113,9 +167,12 @@ int main(int argc, char **argv)
 	check(chd_cd_read_sector(cd, 926, sector, CHD_CD_READ_RAW) == CHDERR_HUNK_OUT_OF_RANGE, "read past leadout", 926);
 	check(chd_cd_read_sector(cd, 0, sector, CHD_CD_READ_SUBCODE) == CHDERR_NONE && memcmp(sector, zeros, CD_MAX_SUBCODE_DATA) == 0, "no subcode reads as zeros", 0);
 
+	check(toc->catalog[0] == 0, "no cue sheet, no catalog", 0);
 	chd_cd_close(cd);
 	chd_close(chd);
 	free(bin);
+
+	check_cuesheet(dir);
 	if (failures == 0)
 		printf("cd toc: ok\n");
 	return failures ? 1 : 0;

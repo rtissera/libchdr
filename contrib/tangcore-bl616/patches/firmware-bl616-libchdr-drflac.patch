@@ -20,7 +20,7 @@ index 83ffe15..b748fb3 100644
  
  # Add source files
 @@ -68,29 +65,7 @@ file(GLOB LIBCHDR_SOURCES
-     "thirdparty/libchdr/deps/zstd-1.5.7/zstddeclib.c"
+     "thirdparty/libchdr/deps/zstd-1.6.0/zstddeclib.c"
  )
  
 -# libchdr_flac.c is the dr_flac backend; exactly one backend is compiled, so

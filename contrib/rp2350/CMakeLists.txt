@@ -102,7 +102,7 @@ add_executable(rp2350-bench
 	${LIBCHDR_ROOT}/src/libchdr_huffman.c
 	${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c
 	${LIBCHDR_ROOT}/deps/miniz-3.1.2/miniz.c
-	${LIBCHDR_ROOT}/deps/zstd-1.5.7/zstddeclib.c
+	${LIBCHDR_ROOT}/deps/zstd-1.6.0/zstddeclib.c
 )
 
 target_include_directories(rp2350-bench PRIVATE

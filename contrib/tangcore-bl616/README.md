@@ -84,7 +84,7 @@ git apply /path/to/libchdr/contrib/tangcore-bl616/patches/firmware-bl616-libchdr
 mkdir -p thirdparty/libchdr
 cp -r /path/to/libchdr/include /path/to/libchdr/src thirdparty/libchdr/
 mkdir -p thirdparty/libchdr/deps
-cp -r /path/to/libchdr/deps/lzma-26.02 /path/to/libchdr/deps/miniz-3.1.2 /path/to/libchdr/deps/zstd-1.5.7 \
+cp -r /path/to/libchdr/deps/lzma-26.02 /path/to/libchdr/deps/miniz-3.1.2 /path/to/libchdr/deps/zstd-1.6.0 \
     thirdparty/libchdr/deps/
 
 mkdir -p chd

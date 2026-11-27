@@ -79,6 +79,6 @@ jobs:
             contrib/esp32p4/smoke_test.c contrib/esp32p4/chd/chd_esp_vfs.c \
             build-esp32p4/libchdr-static.a \
             build-esp32p4/deps/lzma-26.02/libchdr-lzma.a \
-            build-esp32p4/deps/zstd-1.5.7/libzstd.a \
+            build-esp32p4/deps/zstd-1.6.0/libzstd.a \
             build-esp32p4/deps/miniz-3.1.2/libminiz.a
           riscv64-unknown-elf-size contrib/esp32p4/smoke_test.elf

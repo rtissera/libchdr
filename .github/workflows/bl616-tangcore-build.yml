@@ -115,7 +115,7 @@ jobs:
           mkdir -p "$F/thirdparty/libchdr"
           cp -r include src "$F/thirdparty/libchdr/"
           mkdir -p "$F/thirdparty/libchdr/deps"
-          cp -r deps/lzma-26.02 deps/miniz-3.1.2 deps/zstd-1.5.7 "$F/thirdparty/libchdr/deps/"
+          cp -r deps/lzma-26.02 deps/miniz-3.1.2 deps/zstd-1.6.0 "$F/thirdparty/libchdr/deps/"
 
           mkdir -p "$F/chd"
           cp contrib/tangcore-bl616/chd/chd_fatfs.h contrib/tangcore-bl616/chd/chd_fatfs.c "$F/chd/"

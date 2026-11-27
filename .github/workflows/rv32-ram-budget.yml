@@ -90,7 +90,7 @@ jobs:
             -o tests/rv32/fw.elf tests/rv32/fw.c \
             build-rv32/libchdr-static.a \
             build-rv32/deps/lzma-26.02/libchdr-lzma.a \
-            build-rv32/deps/zstd-1.5.7/libzstd.a \
+            build-rv32/deps/zstd-1.6.0/libzstd.a \
             build-rv32/deps/miniz-3.1.2/libminiz.a
 
       - name: Run under qemu-system-riscv32 and enforce RAM budget

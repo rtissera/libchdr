@@ -6,7 +6,7 @@
 #ifdef CHDR_SYSTEM_ZSTD
 #include <zstd.h>
 #else
-#include "../deps/zstd-1.5.7/zstd.h"
+#include "../deps/zstd-1.6.0/zstd.h"
 #endif
 
 #include "../include/libchdr/chd.h"

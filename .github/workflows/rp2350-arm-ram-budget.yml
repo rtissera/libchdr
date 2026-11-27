@@ -93,7 +93,7 @@ jobs:
             -o tests/rp2350-arm/fw.elf tests/rp2350-arm/fw.c \
             build-m33/libchdr-static.a \
             build-m33/deps/lzma-26.02/libchdr-lzma.a \
-            build-m33/deps/zstd-1.5.7/libzstd.a \
+            build-m33/deps/zstd-1.6.0/libzstd.a \
             build-m33/deps/miniz-3.1.2/libminiz.a
 
       - name: Run under qemu-system-arm and enforce RAM budget

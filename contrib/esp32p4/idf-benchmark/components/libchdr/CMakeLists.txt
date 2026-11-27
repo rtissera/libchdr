@@ -108,7 +108,7 @@ idf_component_register(
 		"${LIBCHDR_ROOT}/src/libchdr_huffman.c"
 		"${LIBCHDR_ROOT}/deps/lzma-26.02/src/LzmaDec.c"
 		"${LIBCHDR_ROOT}/deps/miniz-3.1.2/miniz.c"
-		"${LIBCHDR_ROOT}/deps/zstd-1.5.7/zstddeclib.c"
+		"${LIBCHDR_ROOT}/deps/zstd-1.6.0/zstddeclib.c"
 	INCLUDE_DIRS
 		"${LIBCHDR_ROOT}/include"
 )
@@ -145,7 +145,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
 # helper before the flagged read, GCC just can't see it at -Og) - scoped to
 # this one file/component only, not a blanket warning suppression.
 set_source_files_properties(
-	"${LIBCHDR_ROOT}/deps/zstd-1.5.7/zstddeclib.c"
+	"${LIBCHDR_ROOT}/deps/zstd-1.6.0/zstddeclib.c"
 	PROPERTIES COMPILE_OPTIONS "-Wno-error=maybe-uninitialized"
 )
 

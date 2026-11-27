@@ -16,13 +16,19 @@
 #define MINIZ_NO_TIME
 #endif
 
+/* Prevent symbols being exported, to improve optimistation. */
+#define CHD_EXPORT
+#define ZSTDLIB_VISIBLE ZSTDLIB_HIDDEN
+#define ZSTDERRORLIB_VISIBLE ZSTDERRORLIB_HIDDEN
+
 #include "deps/lzma-26.02/src/LzmaDec.c"
 #include "deps/miniz-3.1.2/miniz.c"
-#include "deps/zstd-1.5.7/zstddeclib.c"
+#include "deps/zstd-1.6.0/zstddeclib.c"
 
 #include "src/libchdr_bitstream.c"
 #include "src/libchdr_cdrom.c"
 #include "src/libchdr_chd.c"
+#include "src/libchdr_codec_avhuff.c"
 #include "src/libchdr_codec_cdfl.c"
 #include "src/libchdr_codec_cdlz.c"
 #include "src/libchdr_codec_cdzl.c"

@@ -357,6 +357,7 @@ typedef chd_error (*chd_codec_interface_decompress)(void *codec, const uint8_t *
     FUNCTION PROTOTYPES
 ***************************************************************************/
 
+#ifndef CHD_EXPORT
 #ifdef _MSC_VER
 #ifdef CHD_DLL
 #ifdef CHD_DLL_EXPORTS
@@ -369,6 +370,7 @@ typedef chd_error (*chd_codec_interface_decompress)(void *codec, const uint8_t *
 #endif
 #else
 #define CHD_EXPORT __attribute__ ((visibility("default")))
+#endif
 #endif
 
 /* ----- CHD file management ----- */

@@ -28,6 +28,7 @@
 #include "src/libchdr_bitstream.c"
 #include "src/libchdr_cdrom.c"
 #include "src/libchdr_chd.c"
+#include "src/libchdr_codec_avhuff.c"
 #include "src/libchdr_codec_cdfl.c"
 #include "src/libchdr_codec_cdlz.c"
 #include "src/libchdr_codec_cdzl.c"

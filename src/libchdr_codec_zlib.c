@@ -36,11 +36,11 @@ chd_error zlib_codec_init(void *codec, uint32_t hunkbytes)
 {
 	zlib_codec_data *data = (zlib_codec_data *)codec;
 
-	(void)hunkbytes;
-
 	/* A borrowed inflater is seeded before init runs; keep it across the
 	 * wipe rather than allocating a second one. */
 	tinfl_decompressor *lent = data->borrowed ? data->inflater : NULL;
+
+	(void)hunkbytes;
 
 	memset(data, 0, sizeof(zlib_codec_data));
 	if (lent != NULL)

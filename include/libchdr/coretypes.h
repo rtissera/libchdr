@@ -27,10 +27,10 @@ typedef struct chd_core_file_callbacks {
 	 */
 	size_t(*fread)(void*,size_t,size_t,void*);
 
-	// closes the given file.
+	/* closes the given file. */
 	int (*fclose)(void*);
 
-	// fseek clone
+	/* fseek clone */
 	int (*fseek)(void*, int64_t, int);
 } core_file_callbacks;
 
